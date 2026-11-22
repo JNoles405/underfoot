@@ -15,6 +15,7 @@
   --frame: #3c8a4e;
   --frame-dark: #2a6638;
   --chip: #f7f8f3;
+  --trail: #8f4fb5;
   --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --font-body: "Figtree", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -22,13 +23,13 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #111611; --fg: #e1e7dc; --muted: #98a597; --panel: #1a211a; --line: #2d382d;
-    --accent: #6cc283; --frame: #367345; --frame-dark: #24502f; --chip: #222a22;
+    --accent: #6cc283; --frame: #367345; --frame-dark: #24502f; --chip: #222a22; --trail: #9d5cc4;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #111611; --fg: #e1e7dc; --muted: #98a597; --panel: #1a211a; --line: #2d382d;
-  --accent: #6cc283; --frame: #367345; --frame-dark: #24502f; --chip: #222a22;
+  --accent: #6cc283; --frame: #367345; --frame-dark: #24502f; --chip: #222a22; --trail: #9d5cc4;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -87,6 +88,17 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .brush output { font-family: var(--font-mono); color: var(--muted); }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 500; }
+.toggle kbd { font: 500 11px var(--font-mono); color: var(--muted); margin-left: 4px; }
+.switch {
+  position: relative; flex: none; width: 44px; height: 26px; border-radius: 13px; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); background: var(--chip); transition: background 0.15s, border-color 0.15s;
+}
+.switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform 0.15s, background 0.15s; }
+.switch[aria-checked="true"] { background: var(--trail); border-color: var(--trail); }
+.switch[aria-checked="true"] i { transform: translateX(18px); background: #fff; }
+.switch:hover { border-color: var(--accent); }
+button.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn {
   flex: 1 1 auto; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line);
   background: var(--chip); color: var(--fg); font: 600 14px var(--font-body); cursor: pointer;
@@ -129,6 +141,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
         <label for="brush">Brush size <output id="brushOut" for="brush">4</output></label>
         <input type="range" id="brush" min="1" max="10" value="4">
       </div>
+      <div class="toggle">
+        <span id="trailsLabel">Pheromone trails <kbd>T</kbd></span>
+        <button class="switch" id="trails" role="switch" aria-checked="true" aria-labelledby="trailsLabel"><i></i></button>
+      </div>
       <div class="row">
         <button class="btn" id="pause" aria-pressed="false">Pause</button>
         <button class="btn" id="speed">Speed 1×</button>
@@ -140,10 +156,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
           <li><b>Packed sand holds.</b> Tunnels keep their shape. Sand you pour is loose until it lands.</li>
           <li><b>Two crumbs, one egg.</b> The queen lays when fed. Eggs hatch in about 20 seconds.</li>
           <li><b>Water soaks in.</b> Wet sand darkens and slowly dries. Ants that stay under water too long drown.</li>
+          <li><b>Scent leads to food.</b> An ant carrying a crumb home leaves a violet trail. Workers that cross it follow it back to the food. Trails fade within a minute or two.</li>
           <li><b>Workers age.</b> Each lives a few minutes, so keep the crumbs coming.</li>
         </ul>
       </div>
-      <p class="foot">Keys 1 to 6 pick a material. Space pauses.</p>
+      <p class="foot">Keys 1 to 6 pick a material. T toggles trails. Space pauses.</p>
     </aside>
   </div>
 </div>
@@ -158,6 +175,9 @@ const MAX_ANTS = 260;
 
 const type = new Uint8Array(N), data = new Uint8Array(N), shade = new Uint8Array(N), flag = new Uint8Array(N);
 const stamp = new Uint32Array(N);
+const pher = new Float32Array(N); // food-trail scent on open cells, 0..1; strongest near the food
+const PHER_FADE = 0.9993;         // per step: half-life about 990 steps, roughly 16 s at 1×
+let trails = true;
 const top = new Int16Array(W);
 let frame = 0;
 let ants = [];
@@ -275,7 +295,9 @@ function addAnt(x, y) {
     x, y, hx: rnd() < 0.5 ? -1 : 1, carry: 0, age: 0,
     life: 7200 + rnd() * 6000, wet: 0,
     ddx: (rnd() < 0.5 ? -1 : 1) * (0.25 + rnd() * 0.75), ddy: 0.25 + rnd() * 0.75,
-    tx: -1, ty: -1, id: (rnd() * 1e6) | 0
+    tx: -1, ty: -1, id: (rnd() * 1e6) | 0,
+    trail: 0, bored: 0, nose: rnd() < 0.6, // trail: scent laid while carrying food; nose: follows trails
+    hi: 999, stuck: 0 // highest row reached while carrying sand, and updates since it last improved
   });
 }
 const N8 = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
@@ -311,6 +333,8 @@ function updAnt(a) {
   } else if (a.wet > 0) a.wet -= 2;
 
   if (!supported(a.x, a.y)) { if (passable(a.x, a.y + 1)) a.y++; return true; }
+  if (a.bored > 0) a.bored--;
+  if (trails && a.carry === FOOD && pher[i] < a.trail) pher[i] = a.trail; // lay scent on the way home
   if (rnd() < 0.35) return true; // ants pause
 
   const above = a.y < top[a.x];
@@ -321,24 +345,34 @@ function updAnt(a) {
     if (above && rnd() < 0.07) {
       for (const [dx, dy] of [[0,-1],[-1,-1],[1,-1],[-a.hx,0],[a.hx,0]]) {
         const j = idx(a.x + dx, a.y + dy);
-        if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, SAND, 0, 0); a.carry = 0; break; }
+        if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, SAND, 0, 0); a.carry = 0; a.hi = 999; break; }
       }
+    } else if (!above) {
+      // Dumped sand can slide back and plug the shaft, trapping every carrier below it.
+      // A carrier that stops gaining height digs upward through whatever is in the way.
+      if (a.y < a.hi) { a.hi = a.y; a.stuck = 0; }
+      else if (++a.stuck > 240) { a.stuck = 120; digToward(a, a.hx * 0.3, -1, false); }
     }
   } else if (a.carry === FOOD) {
     gx = queen.x - a.x; gy = queen.y - a.y;
     const dist = Math.hypot(gx, gy);
-    if (dist < 3.6) { a.carry = 0; queen.food++; queen.fed++; return true; }
+    if (dist < 3.6) { a.carry = 0; a.hi = 999; queen.food++; queen.fed++; return true; }
     gx /= dist; gy /= dist;
+    // same rescue as sand carriers: no progress toward the queen for a while, dig toward her
+    if (dist < a.hi - 0.5) { a.hi = dist; a.stuck = 0; }
+    else if (++a.stuck > 240) { a.stuck = 120; digToward(a, gx, gy, false); }
   } else {
     for (const [dx, dy] of N8) {
       const j = idx(a.x + dx, a.y + dy);
-      if (j >= 0 && type[j] === FOOD) { type[j] = E; a.carry = FOOD; a.tx = -1; return true; }
+      if (j >= 0 && type[j] === FOOD) { type[j] = E; a.carry = FOOD; a.tx = -1; a.trail = 1; a.hi = 999; a.stuck = 0; return true; }
     }
     if ((frame + a.id) % 30 === 0) findFood(a);
     if (a.tx >= 0) {
       gx = a.tx - a.x; gy = a.ty - a.y;
       const d = Math.hypot(gx, gy);
       if (d < 1.5) a.tx = -1; else { gx /= d; gy /= d; }
+    } else if (trails && a.nose && a.bored === 0 && sniff(a, i)) {
+      gx = sniffX; gy = sniffY;
     } else if (above) {
       gx = Math.sign(queen.x - a.x) * 0.7 + a.hx * 0.3; gy = 0.6;
     } else {
@@ -360,12 +394,31 @@ function updAnt(a) {
   }
   if (bs > -1e9) {
     a.x += bx; a.y += by; if (bx) a.hx = bx;
+    if (a.carry === FOOD) a.trail *= 0.994; // scent weakens with distance from the food
     // goal-driven ants push through sand when the way is blocked
     if (bs < 0.2 && (a.carry === FOOD || a.tx >= 0) && rnd() < 0.08) digToward(a, gx, gy, false);
   } else {
     a.hx = -a.hx;
     if (rnd() < 0.1) digToward(a, gx, gy, !a.carry);
   }
+  return true;
+}
+// Trail following: step toward the strongest scent next to the ant, which leads toward the food.
+// At the strong end of a trail with no crumb in sight, the ant loses interest for a while.
+let sniffX = 0, sniffY = 0;
+function sniff(a, i) {
+  let best = pher[i], bdx = 0, bdy = 0;
+  for (const [dx, dy] of N8) {
+    const j = idx(a.x + dx, a.y + dy);
+    if (j >= 0 && pher[j] > best && passable(a.x + dx, a.y + dy)) { best = pher[j]; bdx = dx; bdy = dy; }
+  }
+  if (best < 0.04) return false;
+  if (!bdx && !bdy) {
+    findFood(a);
+    if (a.tx < 0) a.bored = 600;
+    return false;
+  }
+  const d = Math.hypot(bdx, bdy); sniffX = bdx / d; sniffY = bdy / d;
   return true;
 }
 function findFood(a) {
@@ -422,6 +475,10 @@ function step() {
     }
   }
   computeTop();
+  if (trails) for (let i = 0; i < N; i++) {
+    if (pher[i] === 0) continue;
+    pher[i] = type[i] !== E || pher[i] < 0.01 ? 0 : pher[i] * PHER_FADE; // fades; sand or water wipes it
+  }
   if (frame % 15 === 0) {
     foodList = []; eggCount = 0;
     for (let i = 0; i < N; i++) {
@@ -447,6 +504,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readTheme)
 new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
 const FOODC = [[244, 238, 222], [212, 146, 76], [150, 196, 92]];
+const TRAIL = [186, 104, 226];
 function px(r, g, b) {
   r = r < 0 ? 0 : r > 255 ? 255 : r | 0; g = g < 0 ? 0 : g > 255 ? 255 : g | 0; b = b < 0 ? 0 : b > 255 ? 255 : b | 0;
   return 0xff000000 | (b << 16) | (g << 8) | r;
@@ -460,7 +518,15 @@ function render() {
       const under = y > top[x];
       let c;
       switch (type[i]) {
-        case E: c = under ? px(104 + v * 0.5, 78 + v * 0.4, 54) : px(sr, sg, sb); break;
+        case E: {
+          let r = under ? 104 + v * 0.5 : sr, g = under ? 78 + v * 0.4 : sg, b = under ? 54 : sb;
+          const p = pher[i];
+          if (p > 0.02) { // scent trail: a violet tint, stronger where the scent is fresh
+            const k = (p > 0.8 ? 1 : p / 0.8) * 0.7;
+            r += (TRAIL[0] - r) * k; g += (TRAIL[1] - g) * k; b += (TRAIL[2] - b) * k;
+          }
+          c = px(r, g, b); break;
+        }
         case SAND: {
           const m = data[i] / 255;
           c = px(214 - 74 * m + v * 2.2, 180 - 68 * m + v * 2, 122 - 52 * m + v * 1.5); break;
@@ -495,7 +561,7 @@ function render() {
 
 /* ---------- scene ---------- */
 function newFarm() {
-  type.fill(0); data.fill(0); flag.fill(0); stamp.fill(0); ants = []; frame = 0;
+  type.fill(0); data.fill(0); flag.fill(0); stamp.fill(0); pher.fill(0); ants = []; frame = 0;
   for (let i = 0; i < N; i++) shade[i] = (rnd() * 255) | 0;
   for (let x = 0; x < W; x++) {
     const s = Math.round(40 + 3 * Math.sin(x / 17) + 2 * Math.sin(x / 7 + 1));
@@ -599,10 +665,19 @@ pauseEl.addEventListener("click", () => setPaused(!paused));
 const speedEl = document.getElementById("speed");
 speedEl.addEventListener("click", () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; speedEl.textContent = `Speed ${speed}×`; });
 document.getElementById("reset").addEventListener("click", () => { newFarm(); render(); });
+const trailsEl = document.getElementById("trails");
+// Off means the v1 colony: no scent is laid or followed, and existing trails are wiped.
+function setTrails(on) {
+  trails = on; trailsEl.setAttribute("aria-checked", String(on));
+  if (!on) { pher.fill(0); for (const a of ants) a.bored = 0; }
+  if (paused) render();
+}
+trailsEl.addEventListener("click", () => setTrails(!trails));
 addEventListener("keydown", e => {
   if (e.target instanceof HTMLInputElement) return;
   const t = TOOLS.find(t => t.key === e.key);
   if (t) { pick(t.id); return; }
+  if (e.key === "t" || e.key === "T") { setTrails(!trails); return; }
   if (e.key === " " && e.target === document.body) { e.preventDefault(); setPaused(!paused); }
 });
 
@@ -624,7 +699,7 @@ function loop() {
   requestAnimationFrame(loop);
 }
 newFarm(); render(); stats();
-window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, step, count: t => type.reduce((n, v) => n + (v === t), 0) };
+window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, list: () => ants, step, setTrails, scent: () => pher.reduce((n, v) => n + (v > 0.02), 0), count: t => type.reduce((n, v) => n + (v === t), 0) };
 requestAnimationFrame(loop);
 })();
 </script>
