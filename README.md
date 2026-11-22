@@ -12,6 +12,6 @@ another digger. You can also pour sand, water and stone, add ants, or erase.
 - The speed button goes 1×, 2×, 4× and Real speed, where ants walk about 2 cm a second like a garden ant (the farm is drawn at 2 mm a cell, about 40 × 26 cm).
 - Packed sand holds its shape; poured sand is loose until it lands.
 - Water soaks into the sand. Ants left under water too long drown.
-- Workers live a few minutes, so the colony needs feeding.
+- Workers live a few minutes, so the colony needs feeding. The dead leave remains, which nestmates carry out to the surface, where they crumble away.
 
 Open `underfoot.html` through the published artifact, or serve it locally (see `HANDOVER.md`).

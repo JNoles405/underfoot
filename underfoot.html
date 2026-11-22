@@ -163,6 +163,7 @@ button.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 
           <li><b>Scent leads to food.</b> An ant carrying a crumb home leaves a violet trail. Workers that cross it follow it back to the food. Trails fade within a minute or two.</li>
           <li><b>Ants rest at night.</b> A day lasts four minutes. After dark, idle workers slow down and dig less. Carriers still finish the job.</li>
           <li><b>Real speed.</b> A garden ant walks about 2 cm a second. At this farm's scale, 2 mm a cell, that is ten cells a second.</li>
+          <li><b>The dead are carried out.</b> Workers that die of old age or drown leave their remains. Nestmates haul them up and out onto the surface, where they crumble away in about a day.</li>
           <li><b>Workers age.</b> Each lives a few minutes, so keep the crumbs coming.</li>
         </ul>
       </div>
@@ -175,8 +176,8 @@ button.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 
 (() => {
 "use strict";
 const W = 200, H = 130, N = W * H;
-const E = 0, SAND = 1, STONE = 2, WATER = 3, FOOD = 4, EGG = 5;
-const DENS = [0, 5, 255, 2, 5, 5];
+const E = 0, SAND = 1, STONE = 2, WATER = 3, FOOD = 4, EGG = 5, DEAD = 6;
+const DENS = [0, 5, 255, 2, 5, 5, 5];
 const MAX_ANTS = 260;
 
 const type = new Uint8Array(N), data = new Uint8Array(N), shade = new Uint8Array(N), flag = new Uint8Array(N);
@@ -219,7 +220,7 @@ function swap(a, b) {
   stamp[a] = stamp[b] = frame;
 }
 function setCell(i, t, d = 0, f = 0) { type[i] = t; data[i] = d; flag[i] = f; shade[i] = (rnd() * 255) | 0; stamp[i] = frame; }
-function isSolid(t) { return t === SAND || t === STONE || t === FOOD || t === EGG; }
+function isSolid(t) { return t === SAND || t === STONE || t === FOOD || t === EGG || t === DEAD; }
 function isAnchor(j) { const t = type[j]; return t === STONE || (t === SAND && flag[j] === 1); }
 function passable(x, y) { const j = idx(x, y); return j >= 0 && (type[j] === E || type[j] === WATER) && !inQueen(x, y); }
 function inQueen(x, y) { return x >= queen.x - 1 && x <= queen.x + 1 && y >= queen.y - 1 && y <= queen.y; }
@@ -317,8 +318,20 @@ function addAnt(x, y) {
     tx: -1, ty: -1, id: (rnd() * 1e6) | 0,
     trail: 0, bored: 0, nose: rnd() < 0.6, // trail: scent laid while carrying food; nose: follows trails
     hi: 999, stuck: 0, // highest row reached while carrying sand, and updates since it last improved
-    acc: rnd() // update budget; below 1 the ant waits this step (real speed)
+    acc: rnd(), // update budget; below 1 the ant waits this step (real speed)
+    load: 0 // decay of the remains it is carrying
   });
+}
+// Old age and drowning leave remains where the ant fell; whatever it carried is dropped beside it.
+// Returns false so ants.filter drops the ant.
+function die(a) {
+  const i = a.y * W + a.x;
+  if (type[i] === E || type[i] === WATER) setCell(i, DEAD, a.carry === DEAD ? a.load : 0, 0);
+  if (a.carry && a.carry !== DEAD) {
+    const j = idx(a.x, a.y - 1);
+    if (j >= 0 && type[j] === E && !inQueen(a.x, a.y - 1)) setCell(j, a.carry, a.carry === FOOD ? (rnd() * 3) | 0 : 0, 0);
+  }
+  return false;
 }
 const N8 = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
 
@@ -338,16 +351,16 @@ function digToward(a, gx, gy, keep) {
 
 function updAnt(a) {
   a.age++;
-  if (a.age > a.life) return false;
+  if (a.age > a.life) return die(a);
   const i = a.y * W + a.x, t = type[i];
   if (isSolid(t)) { // buried: dig out
     if (t === SAND && !a.carry) { a.carry = SAND; type[i] = E; }
     else if (passable(a.x, a.y - 1)) a.y--;
-    else if (t === SAND) type[i] = E;
+    else if (t === SAND || t === DEAD) type[i] = E;
     return true;
   }
   if (t === WATER) {
-    if (++a.wet > 320) return false;
+    if (++a.wet > 320) return die(a);
     if (rnd() < 0.25 && passable(a.x, a.y - 1)) a.y--;
     if (rnd() < 0.5) return true;
   } else if (a.wet > 0) a.wet -= 2;
@@ -360,12 +373,13 @@ function updAnt(a) {
   const above = a.y < top[a.x];
   let gx = 0, gy = 0, digging = false;
 
-  if (a.carry === SAND) {
+  if (a.carry === SAND || a.carry === DEAD) {
+    // sand and the dead both go up and out; the dead are carried further from the entrance before being dropped
     gx = a.hx * 0.6; gy = -1;
-    if (above && rnd() < 0.07) {
+    if (above && rnd() < (a.carry === DEAD ? 0.02 : 0.07)) {
       for (const [dx, dy] of [[0,-1],[-1,-1],[1,-1],[-a.hx,0],[a.hx,0]]) {
         const j = idx(a.x + dx, a.y + dy);
-        if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, SAND, 0, 0); a.carry = 0; a.hi = 999; break; }
+        if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, a.carry, a.carry === DEAD ? a.load : 0, 0); a.carry = 0; a.hi = 999; break; }
       }
     } else if (!above) {
       // Dumped sand can slide back and plug the shaft, trapping every carrier below it.
@@ -385,6 +399,10 @@ function updAnt(a) {
     for (const [dx, dy] of N8) {
       const j = idx(a.x + dx, a.y + dy);
       if (j >= 0 && type[j] === FOOD) { type[j] = E; a.carry = FOOD; a.tx = -1; a.trail = 1; a.hi = 999; a.stuck = 0; return true; }
+    }
+    if (!above && rnd() < 0.3) for (const [dx, dy] of N8) { // remains inside the nest get carried out
+      const j = idx(a.x + dx, a.y + dy);
+      if (j >= 0 && type[j] === DEAD && a.y + dy > top[a.x + dx]) { a.load = data[j]; type[j] = E; data[j] = 0; a.carry = DEAD; a.tx = -1; a.hi = 999; a.stuck = 0; return true; }
     }
     if ((frame + a.id) % 30 === 0) findFood(a);
     if (a.tx >= 0) {
@@ -455,7 +473,7 @@ let eggCount = 0;
 function updQueen() {
   for (let y = queen.y - 1; y <= queen.y; y++) for (let x = queen.x - 1; x <= queen.x + 1; x++) {
     const j = idx(x, y);
-    if (j >= 0 && (type[j] === SAND || type[j] === FOOD)) { type[j] = E; data[j] = 0; flag[j] = 0; }
+    if (j >= 0 && (type[j] === SAND || type[j] === FOOD || type[j] === DEAD)) { type[j] = E; data[j] = 0; flag[j] = 0; }
   }
   if ((frame & 3) === 0 && queen.y < H - 1) {
     let free = true;
@@ -497,6 +515,9 @@ function step() {
         case WATER: updWater(i, x, y); break;
         case FOOD: updPowder(i, x, y, 0.45); break;
         case EGG: updEgg(i, x, y); break;
+        case DEAD: // remains settle like crumbs and crumble away over about one day
+          if ((frame & 63) === 0 && ++data[i] >= 255) { type[i] = E; data[i] = 0; break; }
+          updPowder(i, x, y, 0.3); break;
       }
     }
   }
@@ -551,14 +572,16 @@ function lit(r, g, b) { return px(r * lr, g * lg, b * lb); }
 function render() {
   setSky();
   const stars = daylight < 0.7 ? (0.7 - daylight) / 0.7 : 0;
+  deadCells.length = 0;
   for (let y = 0; y < H; y++) {
     const f = y / H;
     const sr = skyTop[0] + (skyBot[0] - skyTop[0]) * f, sg = skyTop[1] + (skyBot[1] - skyTop[1]) * f, sb = skyTop[2] + (skyBot[2] - skyTop[2]) * f;
     for (let x = 0; x < W; x++) {
       const i = y * W + x, v = (shade[i] - 128) / 16;
       const under = y > top[x];
-      let c;
-      switch (type[i]) {
+      let c, t = type[i];
+      if (t === DEAD) { deadCells.push(i); t = E; } // remains are drawn as sprites over open ground
+      switch (t) {
         case E: {
           let r = under ? 104 + v * 0.5 : sr, g = under ? 78 + v * 0.4 : sg, b = under ? 54 : sb;
           const p = pher[i];
@@ -608,30 +631,44 @@ function render() {
   drawSprites();
 }
 // Sprites in canvas pixels (S per cell), facing right, relative to the cell's centre: [x, y, w, h].
-// Every sprite gets a pale 1 px halo first, so a dark ant shows on a night sky as well as on sand.
-const ANT = [[-4, -1, 3, 2], [-1, -1, 2, 1], [1, -2, 2, 2], [-3, 1, 1, 1], [-1, 0, 1, 2], [1, 0, 1, 1]];
-const LOAD = [[3, -3, 2, 2]]; // a grain or crumb held in the mandibles
-const QUEEN = [[-6, -3, 5, 5], [-1, -2, 3, 3], [2, -3, 3, 3], [-4, 2, 1, 2], [-1, 1, 1, 3], [1, 1, 1, 3]];
-const HALO = "rgba(255, 240, 214, 0.6)", ANTC = "#1c110c", WETC = "#1c1e36", QUEENC = "#5e2c1a";
-function sprite(rects, cx, cy, f, grow) {
-  for (const [x, y, w, h] of rects) ctx.fillRect(cx + (f > 0 ? x : -x - w) - grow, cy + y - grow, w + 2 * grow, h + 2 * grow);
+// Ants are two-tone, like a red wood ant: a black gaster and legs, a rust-red head and thorax, and a
+// glint on each. The red parts are what keep an ant visible against a night sky. No outlines (owner's call).
+const ANT_DARK = [[-4, -1, 3, 2], [-3, 1, 1, 1], [-1, 0, 1, 2], [1, 0, 1, 1]];
+const ANT_RED = [[-1, -1, 2, 1], [1, -2, 2, 2]];
+const ANT_GLINT = [[-4, -1, 1, 1], [2, -2, 1, 1]];
+const LOAD = [[3, -3, 2, 2]]; // a grain, crumb or body held in the mandibles
+const QUEEN_DARK = [[-6, -3, 5, 5], [-4, 2, 1, 2], [-1, 1, 1, 3], [1, 1, 1, 3]];
+const QUEEN_RED = [[-1, -2, 3, 3], [2, -3, 3, 3]];
+const QUEEN_GLINT = [[-5, -2, 2, 1], [4, -3, 1, 1]];
+// remains: an ant on its back, legs in the air, greying as it crumbles
+const CORPSE = [[-3, 0, 6, 1], [-3, 1, 2, 1], [-2, -1, 1, 1], [0, -1, 1, 1], [2, -1, 1, 1]];
+const CORPSE_C = ["#3a2a22", "#4d3f37", "#62574f", "#7a726b"];
+const DARKC = "#22130d", REDC = "#c4623a", GLINTC = "#f0a070", DARK_GLINT = "#6e4a3c", WETC = "#1c1e36";
+const deadCells = [];
+function sprite(rects, cx, cy, f) {
+  for (const [x, y, w, h] of rects) ctx.fillRect(cx + (f > 0 ? x : -x - w), cy + y, w, h);
 }
 function drawSprites() {
-  const qx = queen.x * S + 2, qy = queen.y * S;
-  ctx.fillStyle = HALO;
-  for (const a of ants) sprite(ANT, a.x * S + 2, a.y * S + 2, a.hx, 1);
-  sprite(QUEEN, qx, qy, 1, 1);
-  ctx.fillStyle = QUEENC; sprite(QUEEN, qx, qy, 1, 0);
-  ctx.fillStyle = ANTC;
-  for (const a of ants) {
-    const wet = a.wet > 0 && type[a.y * W + a.x] === WATER;
-    if (wet) { ctx.fillStyle = WETC; sprite(ANT, a.x * S + 2, a.y * S + 2, a.hx, 0); ctx.fillStyle = ANTC; }
-    else sprite(ANT, a.x * S + 2, a.y * S + 2, a.hx, 0);
-    if (a.carry) sprite(LOAD, a.x * S + 2, a.y * S + 2, a.hx, 1);
+  for (let k = 0; k < 4; k++) {
+    ctx.fillStyle = CORPSE_C[k];
+    for (const i of deadCells) if (data[i] >> 6 === k) sprite(CORPSE, (i % W) * S + 2, ((i / W) | 0) * S + 2, shade[i] & 1 ? 1 : -1);
   }
-  for (const a of ants) if (a.carry) {
-    ctx.fillStyle = a.carry === SAND ? "#e8c88c" : "#f4dc9c";
-    sprite(LOAD, a.x * S + 2, a.y * S + 2, a.hx, 0);
+  const qx = queen.x * S + 2, qy = queen.y * S;
+  ctx.fillStyle = DARKC; sprite(QUEEN_DARK, qx, qy, 1);
+  ctx.fillStyle = REDC; sprite(QUEEN_RED, qx, qy, 1);
+  ctx.fillStyle = GLINTC; sprite(QUEEN_GLINT, qx, qy, 1);
+  const wet = a => a.wet > 0 && type[a.y * W + a.x] === WATER; // a drowning ant goes dark blue all over
+  const layer = (rects, color, wetColor) => {
+    ctx.fillStyle = color;
+    for (const a of ants) if (!wet(a)) sprite(rects, a.x * S + 2, a.y * S + 2, a.hx);
+    if (wetColor) { ctx.fillStyle = wetColor; for (const a of ants) if (wet(a)) sprite(rects, a.x * S + 2, a.y * S + 2, a.hx); }
+  };
+  layer(ANT_DARK, DARKC, WETC); layer(ANT_RED, REDC, WETC); layer(ANT_GLINT, GLINTC);
+  ctx.fillStyle = DARK_GLINT;
+  for (const a of ants) if (!wet(a)) sprite(ANT_GLINT.slice(0, 1), a.x * S + 2, a.y * S + 2, a.hx); // gaster glint is dimmer
+  for (const c of [SAND, FOOD, DEAD]) {
+    ctx.fillStyle = c === SAND ? "#e8c88c" : c === FOOD ? "#f4dc9c" : CORPSE_C[1];
+    for (const a of ants) if (a.carry === c) sprite(LOAD, a.x * S + 2, a.y * S + 2, a.hx);
   }
 }
 
@@ -803,7 +840,8 @@ addEventListener("resize", fit); fit();
 newFarm(); render(); stats();
 window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, list: () => ants, step, setTrails, setCycle, setSpeed, render,
   time: () => clock * 24 / DAY, setTime: h => { clock = (h / 24 * DAY) % DAY; setCycle(cycle); }, light: () => daylight,
-  scent: () => pher.reduce((n, v) => n + (v > 0.02), 0), count: t => type.reduce((n, v) => n + (v === t), 0) };
+  scent: () => pher.reduce((n, v) => n + (v > 0.02), 0),
+  remains: () => { const r = { inside: 0, outside: 0 }; for (let i = 0; i < N; i++) if (type[i] === DEAD) r[((i / W) | 0) > top[i % W] ? "inside" : "outside"]++; return r; }, count: t => type.reduce((n, v) => n + (v === t), 0) };
 requestAnimationFrame(loop);
 })();
 </script>

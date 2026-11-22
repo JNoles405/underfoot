@@ -19,6 +19,7 @@ and eggs hatch into workers.
 - Artifact CSP: scripts only from the allowed CDNs, stylesheets only from Google Fonts. Everything else stays inline.
 - Original game. It uses the falling-sand genre and the ant-farm idea, not any existing game's name, art or levels.
 - No data leaves the page. Nothing is stored, not even in localStorage.
+- **No outlines or halos around ants** (owner's call, 2026-11-22, after v1.2 shipped them). Ant visibility comes from their own colours: a black gaster and a rust-red head and thorax.
 
 ## 3. How the work is run
 
@@ -42,10 +43,10 @@ the `underfoot` configuration in `.claude/launch.json` runs the same command.
 Opening the file straight from disk (`file://`) did not work in the app's browser pane.
 
 The page exposes a debug handle for measurement: `window.__underfoot`
-(`step()`, `render()`, `count(type)`, `queen()`, `ants` (a count), `list()` (the ant objects), `frame`, `setTrails(bool)`, `setCycle(bool)`, `setSpeed(1|2|4|"real")`, `time()` / `setTime(hour)`, `light()` (daylight 0–1), `scent()` (cells with visible scent)).
+(`step()`, `render()`, `count(type)`, `queen()`, `ants` (a count), `list()` (the ant objects), `frame`, `setTrails(bool)`, `setCycle(bool)`, `setSpeed(1|2|4|"real")`, `time()` / `setTime(hour)`, `light()` (daylight 0–1), `scent()` (cells with visible scent), `remains()` (`{inside, outside}` counts of remains below and above the surface line)).
 
 Headless colony test (no browser needed): `node tools/colony-test.js underfoot.html 40 8000 on on 1`
-(arguments after the step count: trails `on|off`, day/night `on|off`, speed `1|real`). It runs the page's script in Node with the DOM stubbed out (any canvas call is a no-op) and also prints the ants' walking speed in cells per step. Type ids: 0 empty, 1 sand, 2 stone, 3 water, 4 food, 5 egg.
+(arguments after the step count: trails `on|off`, day/night `on|off`, speed `1|real`). It runs the page's script in Node with the DOM stubbed out (any canvas call is a no-op) and also prints the ants' walking speed in cells per step. Type ids: 0 empty, 1 sand, 2 stone, 3 water, 4 food, 5 egg, 6 remains.
 
 Rendering in a real browser without the app's preview: build a wrapper file (doctype + `<body>` + the page + a test `<script>`) and run headless Chrome on it, e.g.
 `chrome.exe --headless=new --virtual-time-budget=4000 --screenshot=out.png --window-size=1280,900 file:///…/wrapper.html`
@@ -68,7 +69,8 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - **Pheromone trails** (`pher`, a Float32Array, 0–1, switch `trails`, key T). An ant carrying food stamps `pher[cell] = max(pher, a.trail)`; `a.trail` starts at 1 on pickup and is multiplied by 0.994 per move, so scent is **strongest near the food** and following it uphill leads there. Each step the field is multiplied by `PHER_FADE` (0.9993, half-life about 990 steps) and wiped on any cell that is not empty, so poured sand or water erases it. Only ants with `nose` (60%, set at birth) follow trails, so the rest keep digging. An ant at the strong end of a trail with no crumb in sight gets `bored` for 600 updates. Trail-following sits below "chasing a crumb I can see" and above "dig". Turning the switch off wipes the field and restores the v1 behaviour exactly.
 - **Stuck carriers dig out.** `a.hi` holds the best progress since pickup (row for sand, distance to the queen for food) and `a.stuck` counts updates without improvement. After 240, the ant digs one cell toward its goal (removing that sand) and the counter drops to 120. Without this, dumped sand slides back down the entrance shaft and plugs it, every worker inside ends up carrying a grain up to the plug, and the colony starves (19 of 40 v1 runs).
 - The queen is a 3 × 2 agent. Sand that lands on her footprint is cleared. She falls if nothing is under her.
-- **Drawing is two layers.** The grid is written 1:1 into an offscreen 200 × 130 canvas, drawn 4× (`S`) onto the visible 800 × 520 canvas with smoothing off, and then ants and the queen are drawn on top as small sprites (`ANT`, `QUEEN`, `LOAD` rect lists, facing right, mirrored by `hx`). Every sprite gets a pale 1 px halo first. That halo is what makes a dark ant visible on a night sky; without it the ant body against the night sky measured 1.04:1. The canvas uses `image-rendering: pixelated` only when shown at least at 800 device px wide (`fit()`), otherwise smooth, so the 1 px halos survive shrinking.
+- **Drawing is two layers.** The grid is written 1:1 into an offscreen 200 × 130 canvas, drawn 4× (`S`) onto the visible 800 × 520 canvas with smoothing off, and then remains, the queen and the ants are drawn on top as small sprites (rect lists facing right, mirrored by `hx`). An ant is two-tone: `ANT_DARK` (gaster, legs) in near-black and `ANT_RED` (head, thorax) in rust red, plus `ANT_GLINT` pixels. The two tones are there so one of them always contrasts: the black gaster against light sky and sand, the red head against the night sky (a plain dark ant measured 1.04:1 there). v1.2 used a pale halo instead; the owner rejected it (see Standing constraints). The canvas uses `image-rendering: pixelated` only when shown at least at 800 device px wide (`fit()`), otherwise smooth.
+- **Death and remains** (`DEAD`, type 6). An ant that dies of age or drowning becomes a `DEAD` cell where it stood (`die()`); what it carried is dropped above it. Remains fall and pile like crumbs and count as solid. `data` is decay: +1 every 64 steps, gone at 255 (about 16,300 steps, a little over one in-game day), and the sprite greys in four steps. Idle workers below ground pick up adjacent remains (30% per update) and carry them like sand, up and out, dropping them on the surface less eagerly than sand (2% vs 7% per update) so they get carried further. The body keeps its decay while carried (`a.load`). Remains are drawn as an ant on its back, over the cell's sky or tunnel colour.
 - **Day and night** (`cycle`, key N). `clock` counts steps through a `DAY` of 14,400 steps (4 minutes at 60 steps a second); every new farm opens at 09:00. `daylight` (0–1) is a smoothstep ramp, 05:00–07:00 up and 18:00–20:00 down; `night` is `daylight < 0.35`. Daylight sets the sky (theme day sky → navy, warm band at dawn and dusk), the light on the farm (`lr/lg/lb`, down to 0.62 and cooler at night), stars (a fixed hash of x, y) and the sun or moon disc, which is painted only on sky cells so it sets behind the hills. At night idle ants pause 65% of updates instead of 35% and dig at half the rate; carriers are unaffected. Off = endless day, clock frozen.
 - **Steps follow the wall clock.** The loop owes `dt × 60 × speed` steps per frame (at most 8), so 1× is 60 steps a second on a 120 Hz screen too. Before v1.2 it ran one step per animation frame, so high-refresh screens ran fast.
 - **Real speed** (the fourth speed setting). Physics runs at 1× but each ant only updates when its `acc` budget reaches 1; `antRate` is `REAL_RATE` (0.28), so ants move at 10.4 cells/s (measured). Ageing, digging and the stuck counters are per ant update, so ants also live and dig on the slower clock; trail evaporation is scaled to `PHER_FADE ** antRate` so trails last the same number of ant steps. At `antRate` 1 the filter is identical to the old `ants.filter(updAnt)`. Scale behind the number: 2 mm a cell (a 40 × 26 cm farm, the size of a commercial ant farm; the ant sprite is about 3.5 mm), and a garden ant (*Lasius niger*) walks about 2 cm/s at room temperature, up to about 2.85 cm/s when warm.
@@ -81,6 +83,8 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - **2026-11-21, v1.1: pheromone trails.** Food carriers lay a violet scent trail that other workers follow to the food; a switch in the sidebar (and key T) turns the whole mechanic on or off. While measuring it, found that v1 stalled in about half of runs (shaft plugged by dumped sand, all workers stuck carrying grains), so carriers that stop making progress now dig toward their goal. Added `tools/colony-test.js`. Artifact republished (version 2).
 
 - **2026-11-22, v1.2: day and night, visible ants, real speed.** Ants were near invisible on the dark-theme sky (1-pixel near-black ant on navy). Ants and queen are now outlined sprites drawn at 4× over the grid. Added a day/night cycle with sun, moon, stars and dusk colours, a night rest for idle workers, and a switch (key N) plus a Time stat. Added Real speed to the speed button. The loop now runs on wall-clock time. `tools/colony-test.js` takes day/night and speed arguments and reports walking speed.
+
+- **2026-11-22, v1.3: death and remains; no outlines.** Ants that die of age or drowning leave remains, which workers carry out of the nest and which crumble in about a day. The owner did not like the v1.2 outlines, so ants are now two-tone (black gaster, rust-red head and thorax) with no halo.
 
 ## 7. Traps already paid for
 
@@ -131,13 +135,25 @@ v1.2, measured 2026-11-22:
 - Step cost 0.21 ms (Node, 20 ants); render's JS side 0.17 ms with canvas calls stubbed. GPU cost of the sprite draws not measured.
 - Screenshots (headless Chrome, 1280 × 900): light day, dark day, dark dusk, dark night, light night all render with sun or moon, stars at night and outlined ants. At the narrowest headless viewport (500 px) page width 485 px, no sideways scroll.
 
-Not verified: the v1.2 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
+v1.3, measured 2026-11-22 (headless Chrome, sampled from the rendered canvas; the v1.2 table above is for the halo design, since removed):
+
+| Theme, time | Red head vs. sky | Black gaster vs. sky |
+| --- | --- | --- |
+| light, 12:00 | 3.4 | 13.0 |
+| dark, 12:00 | 1.4 | 3.2 |
+| dark, 19:18 (dusk) | 1.5 | 3.0 |
+| either, 23:00 (night) | 4.2 | 1.1 |
+
+Against tunnels (colour pairs, computed): by day black 2.3, red 1.9 (the red also differs in hue); at night red 3.2, black 1.4. Remains over 16,000 steps in 3 runs: 36–43 ants died; up to 15 different workers hauled a body; most deaths happen on the surface, so most remains end up there anyway. Colony, 40 runs × 8000 steps, trails and day/night on: 7/40 stalled, mean fed 42.7, peak workers 38.6 (v1.2: 7/40, 42.4, 39.0), so hauling bodies costs nothing measurable.
+
+Not verified: the v1.2/v1.3 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
 
 ## 9. Outstanding
 
 - About 1 run in 8 still stalls (fed under 20 after 8000 steps), with or without trails. Cause not yet diagnosed.
 - View the live artifact (now v1.2) and check trails, day/night, the ant sprites and Real speed there, ideally from a session opened directly in `F:\Underfoot` so the preview server serves this folder.
-- Ideas, not commitments: ants that die leaving remains, saving a farm, the day following the viewer's real clock in Real speed mode.
+- Idle workers on the surface head toward the queen's x position (`gx = sign(queen.x - a.x)`) and crowd on the ground above her chamber, unable to get down. With v1.3 the remains of those that die there pile up in that spot, which makes it visible. Possibly related to the stalled runs above; not investigated.
+- Ideas, not commitments: saving a farm, the day following the viewer's real clock in Real speed mode.
 
 ## 10. Code conventions
 
