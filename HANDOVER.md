@@ -42,10 +42,14 @@ the `underfoot` configuration in `.claude/launch.json` runs the same command.
 Opening the file straight from disk (`file://`) did not work in the app's browser pane.
 
 The page exposes a debug handle for measurement: `window.__underfoot`
-(`step()`, `count(type)`, `queen()`, `ants` (a count), `list()` (the ant objects), `frame`, `setTrails(bool)`, `scent()` (cells with visible scent)).
+(`step()`, `render()`, `count(type)`, `queen()`, `ants` (a count), `list()` (the ant objects), `frame`, `setTrails(bool)`, `setCycle(bool)`, `setSpeed(1|2|4|"real")`, `time()` / `setTime(hour)`, `light()` (daylight 0–1), `scent()` (cells with visible scent)).
 
-Headless colony test (no browser needed): `node tools/colony-test.js underfoot.html 40 8000 on`
-(last argument `on` or `off` for trails). It runs the page's script in Node with the DOM stubbed out. Type ids: 0 empty, 1 sand, 2 stone, 3 water, 4 food, 5 egg.
+Headless colony test (no browser needed): `node tools/colony-test.js underfoot.html 40 8000 on on 1`
+(arguments after the step count: trails `on|off`, day/night `on|off`, speed `1|real`). It runs the page's script in Node with the DOM stubbed out (any canvas call is a no-op) and also prints the ants' walking speed in cells per step. Type ids: 0 empty, 1 sand, 2 stone, 3 water, 4 food, 5 egg.
+
+Rendering in a real browser without the app's preview: build a wrapper file (doctype + `<body>` + the page + a test `<script>`) and run headless Chrome on it, e.g.
+`chrome.exe --headless=new --virtual-time-budget=4000 --screenshot=out.png --window-size=1280,900 file:///…/wrapper.html`
+or `--dump-dom` to read results the test script writes into the page. Under `--virtual-time-budget`, `performance.now()` does not advance during script execution, so time code in Node instead. Headless Chrome will not make the viewport narrower than 500 px.
 
 To republish from a Claude session: Artifact publish with the file path (same session) or with
 `url: https://claude.ai/artifact/Nj1KucKdfZLcxEmuFpAXCD` (other sessions, after reading it first).
@@ -64,6 +68,10 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - **Pheromone trails** (`pher`, a Float32Array, 0–1, switch `trails`, key T). An ant carrying food stamps `pher[cell] = max(pher, a.trail)`; `a.trail` starts at 1 on pickup and is multiplied by 0.994 per move, so scent is **strongest near the food** and following it uphill leads there. Each step the field is multiplied by `PHER_FADE` (0.9993, half-life about 990 steps) and wiped on any cell that is not empty, so poured sand or water erases it. Only ants with `nose` (60%, set at birth) follow trails, so the rest keep digging. An ant at the strong end of a trail with no crumb in sight gets `bored` for 600 updates. Trail-following sits below "chasing a crumb I can see" and above "dig". Turning the switch off wipes the field and restores the v1 behaviour exactly.
 - **Stuck carriers dig out.** `a.hi` holds the best progress since pickup (row for sand, distance to the queen for food) and `a.stuck` counts updates without improvement. After 240, the ant digs one cell toward its goal (removing that sand) and the counter drops to 120. Without this, dumped sand slides back down the entrance shaft and plugs it, every worker inside ends up carrying a grain up to the plug, and the colony starves (19 of 40 v1 runs).
 - The queen is a 3 × 2 agent. Sand that lands on her footprint is cleared. She falls if nothing is under her.
+- **Drawing is two layers.** The grid is written 1:1 into an offscreen 200 × 130 canvas, drawn 4× (`S`) onto the visible 800 × 520 canvas with smoothing off, and then ants and the queen are drawn on top as small sprites (`ANT`, `QUEEN`, `LOAD` rect lists, facing right, mirrored by `hx`). Every sprite gets a pale 1 px halo first. That halo is what makes a dark ant visible on a night sky; without it the ant body against the night sky measured 1.04:1. The canvas uses `image-rendering: pixelated` only when shown at least at 800 device px wide (`fit()`), otherwise smooth, so the 1 px halos survive shrinking.
+- **Day and night** (`cycle`, key N). `clock` counts steps through a `DAY` of 14,400 steps (4 minutes at 60 steps a second); every new farm opens at 09:00. `daylight` (0–1) is a smoothstep ramp, 05:00–07:00 up and 18:00–20:00 down; `night` is `daylight < 0.35`. Daylight sets the sky (theme day sky → navy, warm band at dawn and dusk), the light on the farm (`lr/lg/lb`, down to 0.62 and cooler at night), stars (a fixed hash of x, y) and the sun or moon disc, which is painted only on sky cells so it sets behind the hills. At night idle ants pause 65% of updates instead of 35% and dig at half the rate; carriers are unaffected. Off = endless day, clock frozen.
+- **Steps follow the wall clock.** The loop owes `dt × 60 × speed` steps per frame (at most 8), so 1× is 60 steps a second on a 120 Hz screen too. Before v1.2 it ran one step per animation frame, so high-refresh screens ran fast.
+- **Real speed** (the fourth speed setting). Physics runs at 1× but each ant only updates when its `acc` budget reaches 1; `antRate` is `REAL_RATE` (0.28), so ants move at 10.4 cells/s (measured). Ageing, digging and the stuck counters are per ant update, so ants also live and dig on the slower clock; trail evaporation is scaled to `PHER_FADE ** antRate` so trails last the same number of ant steps. At `antRate` 1 the filter is identical to the old `ants.filter(updAnt)`. Scale behind the number: 2 mm a cell (a 40 × 26 cm farm, the size of a commercial ant farm; the ant sprite is about 3.5 mm), and a garden ant (*Lasius niger*) walks about 2 cm/s at room temperature, up to about 2.85 cm/s when warm.
 
 ## 6. What changed and why
 
@@ -72,13 +80,15 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - **2026-11-21, folder.** Working copy moved to `F:\Underfoot`. Dev server restarted from there and checked. (It later turned out the app still runs the server from the old folder; see Traps.)
 - **2026-11-21, v1.1: pheromone trails.** Food carriers lay a violet scent trail that other workers follow to the food; a switch in the sidebar (and key T) turns the whole mechanic on or off. While measuring it, found that v1 stalled in about half of runs (shaft plugged by dumped sand, all workers stuck carrying grains), so carriers that stop making progress now dig toward their goal. Added `tools/colony-test.js`. Artifact republished (version 2).
 
+- **2026-11-22, v1.2: day and night, visible ants, real speed.** Ants were near invisible on the dark-theme sky (1-pixel near-black ant on navy). Ants and queen are now outlined sprites drawn at 4× over the grid. Added a day/night cycle with sun, moon, stars and dusk colours, a night rest for idle workers, and a switch (key N) plus a Time stat. Added Real speed to the speed button. The loop now runs on wall-clock time. `tools/colony-test.js` takes day/night and speed arguments and reports walking speed.
+
 ## 7. Traps already paid for
 
 - A plain falling-sand rule collapses every tunnel. See the packed sand rule above before changing `updSand`.
 - `file://` preview fails in the app's browser pane; serve over localhost instead.
 - The preview server's port must come from `PORT`; a hardcoded port collided with something already on 5178.
 - The preview server first lived in the session's temporary scratchpad, so `launch.json` pointed at a path that could disappear. Keep `serve.js` in the repo and reference it relatively.
-- After the session moved to `F:\Underfoot`, the app's `preview_start` **kept launching `serve.js` in the old temporary folder** and served the old file, even with `cwd` or absolute paths added to `launch.json` (the app reads the original folder's config). `preview_list` shows the server's `cwd`; check it. A new session opened directly in `F:\Underfoot` should not have this problem (not yet confirmed). Until then, test logic with `tools/colony-test.js`; the switch UI in v1.1 was checked by injecting its CSS into the old page.
+- After the session moved to `F:\Underfoot`, the app's `preview_start` **kept launching `serve.js` in the old temporary folder** and served the old file, even with `cwd` or absolute paths added to `launch.json` (the app reads the original folder's config). `preview_list` shows the server's `cwd`; check it. A new session opened directly in `F:\Underfoot` should not have this problem (not yet confirmed). Until then, test logic with `tools/colony-test.js`; the switch UI in v1.1 was checked by injecting its CSS into the old page. On 2026-11-22 (same session, resumed) it still served the old folder, so v1.2 was checked in headless Chrome instead (see section 4). Claude in Chrome cannot open `file://` URLs (it rewrites them to `https://file///…`).
 - Colony outcomes are bimodal and noisy: with 12 or 16 runs, trails looked both worse and better than no trails. Use 40 runs of 8000 steps before trusting a difference.
 - When the Claude app moves a session to a new folder it does not copy `.git` or `.claude`. After the move, the repo was rebuilt with `git init -b main`, `git remote add origin …`, `git fetch`, `git reset origin/main`, and `.claude/launch.json` was restored with `git checkout`. Check `git status` after any such move.
 - Stats only refresh inside the `requestAnimationFrame` loop. Calling `step()` from the console does not update the numbers on screen until a frame renders.
@@ -105,11 +115,29 @@ v1.1, measured headless with `node tools/colony-test.js underfoot.html 40 8000 [
 
 The big gain is the stuck-carrier fix. Trails add a small improvement that is within the noise; their value is mostly visible behaviour (workers recruited along a highway). Step cost with trails on: 0.23 ms against 0.22 ms off. A rendered frame at step 2500 showed the trail running from the crumb pile along the surface and down the carriers' tunnel. Switch states measured in the browser: off has a grey knob at 4 px, on has a white knob at 22 px on a violet track. Not verified: the republished artifact viewed live, and the full v1.1 page in a browser (see Traps).
 
+v1.2, measured 2026-11-22:
+
+- Contrast (WCAG ratio, sampled from the rendered canvas in headless Chrome, ant thorax pixel vs. halo vs. the sky three cells above):
+
+  | Theme, time | Ant body vs. sky | Halo vs. sky | Body vs. halo |
+  | --- | --- | --- | --- |
+  | light, 12:00 | 13.7 | 1.3 | 10.8 |
+  | dark, 12:00 | 3.2 | 3.1 | 9.9 |
+  | either, 23:00 (night) | 1.04 | 8.9 | 8.6 |
+
+  Under ground the body measured 4.1–5.8 against the tunnel. v1.1's dark-theme sky (16, 24, 40) against its near-black ant is about 1.1:1, the reported problem.
+- Walking speed (headless, pauses included): 1× 0.565–0.582 cells a step (about 35 cells/s); Real speed 0.174 cells a step = 10.4 cells/s = 2.1 cm/s at 2 mm a cell.
+- Colony, 40 runs × 8000 steps, trails on: day/night off 6/40 stalled, mean fed 45.1, peak workers 40.5; day/night on 7/40, mean fed 42.4, peak workers 39.0. The night rest costs a little food, within the noise. Real speed, 12 runs × 28,800 steps (two in-game days): 2/12 stalled, mean fed 40.1, peak workers 38.9. The colony keeps up because ants also age per update.
+- Step cost 0.21 ms (Node, 20 ants); render's JS side 0.17 ms with canvas calls stubbed. GPU cost of the sprite draws not measured.
+- Screenshots (headless Chrome, 1280 × 900): light day, dark day, dark dusk, dark night, light night all render with sun or moon, stars at night and outlined ants. At the narrowest headless viewport (500 px) page width 485 px, no sideways scroll.
+
+Not verified: the v1.2 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
+
 ## 9. Outstanding
 
 - About 1 run in 8 still stalls (fed under 20 after 8000 steps), with or without trails. Cause not yet diagnosed.
-- View the v1.1 artifact live and check the trails and switch there, ideally from a session opened directly in `F:\Underfoot` so the preview server serves this folder.
-- Ideas, not commitments: a day/night cycle, ants that die leaving remains, saving a farm.
+- View the live artifact (now v1.2) and check trails, day/night, the ant sprites and Real speed there, ideally from a session opened directly in `F:\Underfoot` so the preview server serves this folder.
+- Ideas, not commitments: ants that die leaving remains, saving a farm, the day following the viewer's real clock in Real speed mode.
 
 ## 10. Code conventions
 

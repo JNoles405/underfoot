@@ -64,7 +64,6 @@ h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(32px, 
 }
 canvas {
   display: block; width: 100%; height: auto; aspect-ratio: 200 / 130; max-width: 100%;
-  image-rendering: pixelated; image-rendering: crisp-edges;
   border-radius: 4px; touch-action: none; cursor: crosshair; background: #2c2118;
 }
 .legs { display: flex; justify-content: space-between; padding: 0 24px; margin-top: -2px; }
@@ -121,13 +120,14 @@ button.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 
       <div class="stat"><span>Eggs</span><b id="sEggs">0</b></div>
       <div class="stat"><span>Fed queen</span><b id="sFed">0</b></div>
       <div class="stat"><span>Tunnel cm</span><b id="sTunnel">0</b></div>
+      <div class="stat"><span>Time</span><b id="sTime">09:00</b></div>
     </div>
   </header>
 
   <div class="layout">
     <div>
       <div class="farm">
-        <canvas id="c" width="200" height="130" aria-label="Ant farm. Click or drag to drop the selected material."></canvas>
+        <canvas id="c" width="800" height="520"aria-label="Ant farm. Click or drag to drop the selected material."></canvas>
       </div>
       <div class="legs" aria-hidden="true"><i></i><i></i></div>
     </div>
@@ -145,6 +145,10 @@ button.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 
         <span id="trailsLabel">Pheromone trails <kbd>T</kbd></span>
         <button class="switch" id="trails" role="switch" aria-checked="true" aria-labelledby="trailsLabel"><i></i></button>
       </div>
+      <div class="toggle">
+        <span id="cycleLabel">Day and night <kbd>N</kbd></span>
+        <button class="switch" id="cycle" role="switch" aria-checked="true" aria-labelledby="cycleLabel"><i></i></button>
+      </div>
       <div class="row">
         <button class="btn" id="pause" aria-pressed="false">Pause</button>
         <button class="btn" id="speed">Speed 1×</button>
@@ -157,10 +161,12 @@ button.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 
           <li><b>Two crumbs, one egg.</b> The queen lays when fed. Eggs hatch in about 20 seconds.</li>
           <li><b>Water soaks in.</b> Wet sand darkens and slowly dries. Ants that stay under water too long drown.</li>
           <li><b>Scent leads to food.</b> An ant carrying a crumb home leaves a violet trail. Workers that cross it follow it back to the food. Trails fade within a minute or two.</li>
+          <li><b>Ants rest at night.</b> A day lasts four minutes. After dark, idle workers slow down and dig less. Carriers still finish the job.</li>
+          <li><b>Real speed.</b> A garden ant walks about 2 cm a second. At this farm's scale, 2 mm a cell, that is ten cells a second.</li>
           <li><b>Workers age.</b> Each lives a few minutes, so keep the crumbs coming.</li>
         </ul>
       </div>
-      <p class="foot">Keys 1 to 6 pick a material. T toggles trails. Space pauses.</p>
+      <p class="foot">Keys 1 to 6 pick a material. T toggles trails, N toggles day and night. Space pauses.</p>
     </aside>
   </div>
 </div>
@@ -178,6 +184,14 @@ const stamp = new Uint32Array(N);
 const pher = new Float32Array(N); // food-trail scent on open cells, 0..1; strongest near the food
 const PHER_FADE = 0.9993;         // per step: half-life about 990 steps, roughly 16 s at 1×
 let trails = true;
+// Day and night: a day is DAY steps (4 minutes at 60 steps a second). daylight runs 0 (night) to 1 (day).
+const DAY = 14400;
+let cycle = true, clock = DAY * 9 / 24, daylight = 1, night = false;
+// Real speed: at 2 mm a cell (a 40 x 26 cm farm), a garden ant's ~2 cm/s is 10 cells/s.
+// Ants at 1x measured about 35 cells/s (0.58 cells a step, pauses included), so each ant updates on
+// 0.28 of steps; that measured 0.174 cells a step = 10.4 cells/s = 2.1 cm/s (tools/colony-test.js prints it).
+const REAL_RATE = 0.28;
+let antRate = 1, fade = PHER_FADE;
 const top = new Int16Array(W);
 let frame = 0;
 let ants = [];
@@ -186,9 +200,14 @@ let foodList = [];
 let rainFed = 0;
 const rnd = Math.random;
 
+// The grid is drawn 1:1 into an offscreen canvas, scaled up S times onto the visible one, and the ants and
+// queen are drawn on top as small outlined sprites at that resolution, so they show on any background.
+const S = 4;
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
-const img = ctx.createImageData(W, H);
+const field = document.createElement("canvas"); field.width = W; field.height = H;
+const fctx = field.getContext("2d");
+const img = fctx.createImageData(W, H);
 const buf = new Uint32Array(img.data.buffer);
 
 function idx(x, y) { return (x < 0 || y < 0 || x >= W || y >= H) ? -1 : y * W + x; }
@@ -297,7 +316,8 @@ function addAnt(x, y) {
     ddx: (rnd() < 0.5 ? -1 : 1) * (0.25 + rnd() * 0.75), ddy: 0.25 + rnd() * 0.75,
     tx: -1, ty: -1, id: (rnd() * 1e6) | 0,
     trail: 0, bored: 0, nose: rnd() < 0.6, // trail: scent laid while carrying food; nose: follows trails
-    hi: 999, stuck: 0 // highest row reached while carrying sand, and updates since it last improved
+    hi: 999, stuck: 0, // highest row reached while carrying sand, and updates since it last improved
+    acc: rnd() // update budget; below 1 the ant waits this step (real speed)
   });
 }
 const N8 = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
@@ -335,7 +355,7 @@ function updAnt(a) {
   if (!supported(a.x, a.y)) { if (passable(a.x, a.y + 1)) a.y++; return true; }
   if (a.bored > 0) a.bored--;
   if (trails && a.carry === FOOD && pher[i] < a.trail) pher[i] = a.trail; // lay scent on the way home
-  if (rnd() < 0.35) return true; // ants pause
+  if (rnd() < (night && !a.carry ? 0.65 : 0.35)) return true; // ants pause, and rest more after dark
 
   const above = a.y < top[a.x];
   let gx = 0, gy = 0, digging = false;
@@ -382,7 +402,7 @@ function updAnt(a) {
     }
   }
 
-  if (digging && !a.carry && rnd() < 0.14 && digToward(a, gx, gy, true)) return true;
+  if (digging && !a.carry && rnd() < (night ? 0.07 : 0.14) &&digToward(a, gx, gy, true)) return true;
 
   let bx = 0, by = 0, bs = -1e9;
   for (const [dx, dy] of N8) {
@@ -459,8 +479,14 @@ function computeTop() {
     top[x] = y;
   }
 }
+function dayLight(h) {
+  const s = t => t * t * (3 - 2 * t);
+  return h < 5 || h >= 20 ? 0 : h < 7 ? s((h - 5) / 2) : h < 18 ? 1 : 1 - s((h - 18) / 2);
+}
 function step() {
   frame++;
+  if (cycle) { clock = (clock + 1) % DAY; daylight = dayLight(clock * 24 / DAY); } else daylight = 1;
+  night = daylight < 0.35;
   for (let y = H - 1; y >= 0; y--) {
     const ltr = (frame + y) & 1;
     for (let k = 0; k < W; k++) {
@@ -477,7 +503,7 @@ function step() {
   computeTop();
   if (trails) for (let i = 0; i < N; i++) {
     if (pher[i] === 0) continue;
-    pher[i] = type[i] !== E || pher[i] < 0.01 ? 0 : pher[i] * PHER_FADE; // fades; sand or water wipes it
+    pher[i] = type[i] !== E || pher[i] < 0.01 ? 0 : pher[i] * fade; // fades; sand or water wipes it
   }
   if (frame % 15 === 0) {
     foodList = []; eggCount = 0;
@@ -487,7 +513,8 @@ function step() {
     }
   }
   updQueen();
-  ants = ants.filter(updAnt);
+  // At real speed each ant updates on about a quarter of steps; at rate 1 this is ants.filter(updAnt).
+  ants = ants.filter(a => (a.acc += antRate) < 1 || (a.acc -= 1, updAnt(a)));
 }
 
 /* ---------- drawing ---------- */
@@ -496,8 +523,19 @@ const skyTop = [0,0,0], skyBot = [0,0,0];
 function readTheme() {
   const t = document.documentElement.getAttribute("data-theme");
   dark = t === "dark" ? true : t === "light" ? false : matchMedia("(prefers-color-scheme: dark)").matches;
-  const a = dark ? [16, 24, 40] : [196, 222, 232], b = dark ? [34, 44, 58] : [232, 238, 226];
-  skyTop.splice(0, 3, ...a); skyBot.splice(0, 3, ...b);
+}
+// Sky by time of day: the theme's day sky, a navy night, and a warm band at the horizon at dawn and dusk.
+const NIGHT_TOP = [6, 9, 24], NIGHT_BOT = [22, 28, 52], DUSK = [236, 140, 84];
+const DAY_LIGHT = [[196, 222, 232], [232, 238, 226]], DAY_DARK = [[58, 96, 138], [104, 128, 146]];
+let lr = 1, lg = 1, lb = 1; // light on the farm: dims and cools at night
+function setSky() {
+  const d = daylight, warm = d > 0 && d < 1 ? Math.sin(Math.PI * d) : 0, [dt, db] = dark ? DAY_DARK : DAY_LIGHT;
+  for (let k = 0; k < 3; k++) {
+    skyTop[k] = NIGHT_TOP[k] + (dt[k] - NIGHT_TOP[k]) * d; skyTop[k] += (DUSK[k] - skyTop[k]) * warm * 0.2;
+    skyBot[k] = NIGHT_BOT[k] + (db[k] - NIGHT_BOT[k]) * d; skyBot[k] += (DUSK[k] - skyBot[k]) * warm * 0.55;
+  }
+  const L = 0.62 + 0.38 * d, n = 1 - d;
+  lr = L * (1 - 0.1 * n); lg = L; lb = L * (1 + 0.12 * n);
 }
 readTheme();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readTheme);
@@ -509,7 +547,10 @@ function px(r, g, b) {
   r = r < 0 ? 0 : r > 255 ? 255 : r | 0; g = g < 0 ? 0 : g > 255 ? 255 : g | 0; b = b < 0 ? 0 : b > 255 ? 255 : b | 0;
   return 0xff000000 | (b << 16) | (g << 8) | r;
 }
+function lit(r, g, b) { return px(r * lr, g * lg, b * lb); }
 function render() {
+  setSky();
+  const stars = daylight < 0.7 ? (0.7 - daylight) / 0.7 : 0;
   for (let y = 0; y < H; y++) {
     const f = y / H;
     const sr = skyTop[0] + (skyBot[0] - skyTop[0]) * f, sg = skyTop[1] + (skyBot[1] - skyTop[1]) * f, sb = skyTop[2] + (skyBot[2] - skyTop[2]) * f;
@@ -525,38 +566,73 @@ function render() {
             const k = (p > 0.8 ? 1 : p / 0.8) * 0.7;
             r += (TRAIL[0] - r) * k; g += (TRAIL[1] - g) * k; b += (TRAIL[2] - b) * k;
           }
+          if (under) { c = lit(r, g, b); break; }
+          if (stars > 0 && y < top[x] - 2) { // a fixed scatter of stars that twinkle
+            const h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) >>> 0;
+            if ((h >>> 8) % 1000 < 5) {
+              const k = stars * (0.55 + 0.45 * Math.sin(frame * 0.03 + (h & 63)));
+              r += (236 - r) * k; g += (236 - g) * k; b += (250 - b) * k;
+            }
+          }
           c = px(r, g, b); break;
         }
         case SAND: {
           const m = data[i] / 255;
-          c = px(214 - 74 * m + v * 2.2, 180 - 68 * m + v * 2, 122 - 52 * m + v * 1.5); break;
+          c = lit(214 - 74 * m + v * 2.2, 180 - 68 * m + v * 2, 122 - 52 * m + v * 1.5); break;
         }
-        case STONE: c = px(126 + v * 3, 124 + v * 3, 120 + v * 3); break;
+        case STONE: c = lit(126 + v * 3, 124 + v * 3, 120 + v * 3); break;
         case WATER: {
           const surf = y > 0 && type[i - W] !== WATER;
-          c = under ? px(48, 98 + v, 158 + v) : px(surf ? 98 : 70, surf ? 162 : 138, surf ? 222 : 204);
+          c = under ? lit(48, 98 + v, 158 + v) : lit(surf ? 98 : 70, surf ? 162 : 138, surf ? 222 : 204);
           break;
         }
-        case FOOD: { const k = FOODC[data[i] % 3]; c = px(k[0] + v, k[1] + v, k[2] + v); break; }
-        case EGG: c = px(250, 246, 230 - data[i] / 12); break;
+        case FOOD: { const k = FOODC[data[i] % 3]; c = lit(k[0] + v, k[1] + v, k[2] + v); break; }
+        case EGG: c = lit(250, 246, 230 - data[i] / 12); break;
         default: c = px(255, 0, 255);
       }
       buf[i] = c;
     }
   }
-  // ants and what they carry
-  for (const a of ants) {
-    const i = a.y * W + a.x;
-    buf[i] = a.wet > 0 && type[i] === WATER ? px(24, 24, 44) : px(20, 10, 8);
-    if (a.carry && a.y > 0) {
-      const j = i - W;
-      buf[j] = a.carry === SAND ? px(232, 200, 140) : px(240, 214, 150);
+  if (cycle) { // the sun crosses the sky from 05:30 to 19:30, the moon the rest of the night; both set behind the hills
+    const h = clock * 24 / DAY, sun = h >= 5.5 && h < 19.5;
+    const t = sun ? (h - 5.5) / 14 : ((h + 4.5) % 24) / 10, r = sun ? 4 : 3, col = sun ? px(255, 222, 130) : px(226, 230, 240);
+    const cx = -8 + t * (W + 16), cy = 34 - 28 * Math.sin(Math.PI * t);
+    for (let y = Math.floor(cy - r); y <= cy + r; y++) for (let x = Math.floor(cx - r); x <= cx + r; x++) {
+      const j = idx(x, y);
+      if (j >= 0 && (x - cx) ** 2 + (y - cy) ** 2 <= r * r && type[j] === E && y < top[x]) buf[j] = col;
     }
   }
-  // queen: 3 x 2, head toward her heading
-  const q = [[-1, -1, 74, 34, 22], [0, -1, 88, 42, 26], [1, -1, 40, 20, 14], [-1, 0, 70, 30, 20], [0, 0, 82, 38, 24], [1, 0, 46, 22, 16]];
-  for (const [dx, dy, r, g, b] of q) { const j = idx(queen.x + dx, queen.y + dy); if (j >= 0) buf[j] = px(r, g, b); }
-  ctx.putImageData(img, 0, 0);
+  fctx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(field, 0, 0, W * S, H * S);
+  drawSprites();
+}
+// Sprites in canvas pixels (S per cell), facing right, relative to the cell's centre: [x, y, w, h].
+// Every sprite gets a pale 1 px halo first, so a dark ant shows on a night sky as well as on sand.
+const ANT = [[-4, -1, 3, 2], [-1, -1, 2, 1], [1, -2, 2, 2], [-3, 1, 1, 1], [-1, 0, 1, 2], [1, 0, 1, 1]];
+const LOAD = [[3, -3, 2, 2]]; // a grain or crumb held in the mandibles
+const QUEEN = [[-6, -3, 5, 5], [-1, -2, 3, 3], [2, -3, 3, 3], [-4, 2, 1, 2], [-1, 1, 1, 3], [1, 1, 1, 3]];
+const HALO = "rgba(255, 240, 214, 0.6)", ANTC = "#1c110c", WETC = "#1c1e36", QUEENC = "#5e2c1a";
+function sprite(rects, cx, cy, f, grow) {
+  for (const [x, y, w, h] of rects) ctx.fillRect(cx + (f > 0 ? x : -x - w) - grow, cy + y - grow, w + 2 * grow, h + 2 * grow);
+}
+function drawSprites() {
+  const qx = queen.x * S + 2, qy = queen.y * S;
+  ctx.fillStyle = HALO;
+  for (const a of ants) sprite(ANT, a.x * S + 2, a.y * S + 2, a.hx, 1);
+  sprite(QUEEN, qx, qy, 1, 1);
+  ctx.fillStyle = QUEENC; sprite(QUEEN, qx, qy, 1, 0);
+  ctx.fillStyle = ANTC;
+  for (const a of ants) {
+    const wet = a.wet > 0 && type[a.y * W + a.x] === WATER;
+    if (wet) { ctx.fillStyle = WETC; sprite(ANT, a.x * S + 2, a.y * S + 2, a.hx, 0); ctx.fillStyle = ANTC; }
+    else sprite(ANT, a.x * S + 2, a.y * S + 2, a.hx, 0);
+    if (a.carry) sprite(LOAD, a.x * S + 2, a.y * S + 2, a.hx, 1);
+  }
+  for (const a of ants) if (a.carry) {
+    ctx.fillStyle = a.carry === SAND ? "#e8c88c" : "#f4dc9c";
+    sprite(LOAD, a.x * S + 2, a.y * S + 2, a.hx, 0);
+  }
 }
 
 /* ---------- scene ---------- */
@@ -598,6 +674,7 @@ function newFarm() {
   computeTop();
   const t0 = performance.now();
   for (let k = 0; k < 900 && performance.now() - t0 < 1400; k++) step();
+  clock = DAY * 9 / 24; // every farm opens at nine in the morning, after the warm-up steps
 }
 
 /* ---------- tools ---------- */
@@ -663,21 +740,35 @@ const pauseEl = document.getElementById("pause");
 function setPaused(p) { paused = p; pauseEl.setAttribute("aria-pressed", String(p)); pauseEl.textContent = p ? "Resume" : "Pause"; }
 pauseEl.addEventListener("click", () => setPaused(!paused));
 const speedEl = document.getElementById("speed");
-speedEl.addEventListener("click", () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; speedEl.textContent = `Speed ${speed}×`; });
+// 1x, 2x and 4x run more steps a second. Real speed runs at 1x but ants update on REAL_RATE of steps,
+// so sand and water still fall normally while the ants walk at a garden ant's pace.
+function setSpeed(s) {
+  speed = s; antRate = s === "real" ? REAL_RATE : 1; fade = PHER_FADE ** antRate; // trails fade per ant step, not per frame
+  speedEl.textContent = s === "real" ? "Real speed" : `Speed ${s}×`;
+}
+speedEl.addEventListener("click", () => setSpeed(speed === 1 ? 2 : speed === 2 ? 4 : speed === 4 ? "real" : 1));
 document.getElementById("reset").addEventListener("click", () => { newFarm(); render(); });
 const trailsEl = document.getElementById("trails");
 // Off means the v1 colony: no scent is laid or followed, and existing trails are wiped.
 function setTrails(on) {
   trails = on; trailsEl.setAttribute("aria-checked", String(on));
   if (!on) { pher.fill(0); for (const a of ants) a.bored = 0; }
-  if (paused) render();
 }
 trailsEl.addEventListener("click", () => setTrails(!trails));
+const cycleEl = document.getElementById("cycle");
+// Off means endless daytime: the clock stops where it is and the colony never rests.
+function setCycle(on) {
+  cycle = on; cycleEl.setAttribute("aria-checked", String(on));
+  daylight = on ? dayLight(clock * 24 / DAY) : 1; night = daylight < 0.35;
+  stats();
+}
+cycleEl.addEventListener("click", () => setCycle(!cycle));
 addEventListener("keydown", e => {
   if (e.target instanceof HTMLInputElement) return;
   const t = TOOLS.find(t => t.key === e.key);
   if (t) { pick(t.id); return; }
   if (e.key === "t" || e.key === "T") { setTrails(!trails); return; }
+  if (e.key === "n" || e.key === "N") { setCycle(!cycle); return; }
   if (e.key === " " && e.target === document.body) { e.preventDefault(); setPaused(!paused); }
 });
 
@@ -687,19 +778,32 @@ function stats() {
   let tunnel = 0;
   for (let x = 0; x < W; x++) for (let y = top[x] + 1; y < H; y++) if (type[y * W + x] === E) tunnel++;
   sAnts.textContent = ants.length; sEggs.textContent = eggCount; sFed.textContent = queen.fed;
-  sTunnel.textContent = Math.round(tunnel / 10); // 10 cells ≈ 1 cm of tunnel, at roughly 1 mm a cell
+  sTunnel.textContent = Math.round(tunnel / 10); // at 2 mm a cell, a tunnel about 2 cells wide runs 1 cm per 10 cells
+  if (cycle) { const m = Math.floor(clock * 1440 / DAY / 10) * 10; sTime.textContent = `${String(m / 60 | 0).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; }
+  else sTime.textContent = "Day";
 }
-function loop() {
+const sTime = document.getElementById("sTime");
+// Steps follow the clock, not the display: 60 steps a second at 1x on a 60 Hz or a 120 Hz screen.
+let last = 0, owed = 0;
+function loop(ts) {
+  const dt = last ? Math.min(0.1, (ts - last) / 1000) : 1 / 60; last = ts;
   if (!paused) {
-    for (let k = 0; k < speed; k++) step();
+    owed += dt * 60 * (speed === "real" ? 1 : speed);
+    const n = Math.min(owed | 0, 8); owed = Math.min(owed - n, 1);
+    for (let k = 0; k < n; k++) step();
     if (down && cur && (tool !== SAND || frame % 2 === 0)) paintAt(...cur);
   }
   render();
   if (frame % 15 === 0 || paused) stats();
   requestAnimationFrame(loop);
 }
+// Crisp pixels when the canvas is shown at least at its own size; smooth when shrunk, so the 1 px halos survive.
+function fit() { canvas.style.imageRendering = canvas.clientWidth * (window.devicePixelRatio || 1) >= W * S ? "pixelated" : "auto"; }
+addEventListener("resize", fit); fit();
 newFarm(); render(); stats();
-window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, list: () => ants, step, setTrails, scent: () => pher.reduce((n, v) => n + (v > 0.02), 0), count: t => type.reduce((n, v) => n + (v === t), 0) };
+window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, list: () => ants, step, setTrails, setCycle, setSpeed, render,
+  time: () => clock * 24 / DAY, setTime: h => { clock = (h / 24 * DAY) % DAY; setCycle(cycle); }, light: () => daylight,
+  scent: () => pher.reduce((n, v) => n + (v > 0.02), 0), count: t => type.reduce((n, v) => n + (v === t), 0) };
 requestAnimationFrame(loop);
 })();
 </script>
