@@ -23,7 +23,7 @@ and eggs hatch into workers.
 ## 3. How the work is run
 
 Started 2026-11-21 in one Claude Code session, as a "fun project unrelated to past projects".
-The session had no project folder, so the files live in a temporary folder the app made for that session.
+The local working copy lives at `F:\Underfoot` (moved there from the first session's temporary folder).
 Edit `underfoot.html`, check it in a local preview, then republish the artifact.
 
 ## 4. Building, running, testing
@@ -64,6 +64,7 @@ To republish from a Claude session: Artifact publish with the file path (same se
 
 - **2026-11-21, v1.** First build and publish. After the first look, tunnels were made lighter (ants were invisible on dark tunnels), digging rate raised from 0.05 to 0.14 per eligible step, and drying limited to exposed sand (all moisture was evaporating evenly).
 - **2026-11-21, repo.** `serve.js` moved from the session scratchpad into the project, and `.claude/launch.json` now points at it by relative path. First commit pushed to GitHub.
+- **2026-11-21, folder.** Working copy moved to `F:\Underfoot`. Dev server restarted from there and checked.
 
 ## 7. Traps already paid for
 
@@ -71,6 +72,7 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - `file://` preview fails in the app's browser pane; serve over localhost instead.
 - The preview server's port must come from `PORT`; a hardcoded port collided with something already on 5178.
 - The preview server first lived in the session's temporary scratchpad, so `launch.json` pointed at a path that could disappear. Keep `serve.js` in the repo and reference it relatively.
+- When the Claude app moves a session to a new folder it does not copy `.git` or `.claude`. After the move, the repo was rebuilt with `git init -b main`, `git remote add origin …`, `git fetch`, `git reset origin/main`, and `.claude/launch.json` was restored with `git checkout`. Check `git status` after any such move.
 - Stats only refresh inside the `requestAnimationFrame` loop. Calling `step()` from the console does not update the numbers on screen until a frame renders.
 
 ## 8. How things are verified
@@ -87,8 +89,6 @@ Not verified: real touch input on a phone, and the dark/light switch through the
 
 ## 9. Outstanding
 
-- Move the working copy to a permanent folder. The code is safe on GitHub, but the local folder is a temporary one the Claude app made for the first session and is deleted with it.
-- Qoder: `local_folder` stays empty until that move.
 - Ideas, not commitments: pheromone trails, a day/night cycle, ants that die leaving remains, saving a farm.
 
 ## 10. Code conventions
