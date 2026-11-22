@@ -43,7 +43,7 @@ the `underfoot` configuration in `.claude/launch.json` runs the same command.
 Opening the file straight from disk (`file://`) did not work in the app's browser pane.
 
 The page exposes a debug handle for measurement: `window.__underfoot`
-(`step()`, `render()`, `count(type)`, `queen()`, `ants` (a count), `list()` (the ant objects), `frame`, `setTrails(bool)`, `setCycle(bool)`, `setSpeed(1|2|4|"real")`, `time()` / `setTime(hour)`, `light()` (daylight 0–1), `scent()` (cells with visible scent), `remains()` (`{inside, outside}` counts of remains below and above the surface line)).
+(`step()`, `render()`, `count(type)`, `queen()`, `ants` (a count), `list()` (the ant objects), `frame`, `setTrails(bool)`, `setCycle(bool)`, `setSpeed(1|2|4|"real")`, `time()` / `setTime(hour)`, `light()` (daylight 0–1), `scent()` (cells with visible scent), `remains()` (`{inside, outside}` counts of remains below and above the surface line), `spires()` (columns 6+ above the ground line), `peaks()` (`{n, hi}`: columns above row 28, and the highest sand row)).
 
 Headless colony test (no browser needed): `node tools/colony-test.js underfoot.html 40 8000 on on 1`
 (arguments after the step count: trails `on|off`, day/night `on|off`, speed `1|real`). It runs the page's script in Node with the DOM stubbed out (any canvas call is a no-op) and also prints the ants' walking speed in cells per step. Type ids: 0 empty, 1 sand, 2 stone, 3 water, 4 food, 5 egg, 6 remains.
@@ -62,7 +62,9 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - Update order is bottom row to top, alternating left/right per row and frame, so piles don't lean one way.
 - **Packed sand rule (the reason tunnels exist).** Sand has `flag` 0 (loose, falling) or 1 (settled). Loose sand falls and slides diagonally. Settled sand never slides. Settled sand with nothing below stays put if *both* sides are anchors (settled sand, stone or the frame), and if only one side is an anchor it falls with probability 0.0006 per step. Without this, every tunnel caves in at once. Undercut overhangs crumble slowly by design.
 - Sand `data` is moisture (0–255). Water next to sand soaks in; moisture spreads to drier neighbours; only sand with open air above it dries out.
-- `top[x]` is the first sand/stone cell in each column, recomputed every step. Empty cells below it draw as tunnel, above it as sky. Ants use it to know they are "above ground".
+- `top[x]` is the first sand/stone cell in each column, recomputed every step. **`ground[x]`** is the median of `top` over 7 columns, so a hole up to 3 cells wide does not lower it. Ants use `ground` to know they are "above ground"; drawing treats a cell as underground if it is below `min(top, ground)`. `holes` lists columns where `top > ground + 2`: the ways into the nest.
+- **Getting home from the surface.** Each ant records `ex`, the column where it last crossed the ground line going up. `homeX(a)` returns that hole if it is still open, else the nearest open hole, else `queen.x`. Idle ants on the surface walk to it and go down; food carriers on the surface head for it first and only then for the queen. An idle ant standing at its home column for 240 updates digs down (the way in is plugged).
+- **Spoil goes beside, along the surface.** Sand and remains carriers above ground walk along the surface (`gy = 0`) in their heading, drop only once more than 3 columns from their exit, and drop the grain beside themselves, not above.
 - Ants are objects in `ants[]`, not cells. They can only stand in empty or water cells and only move to cells touching something solid (the glass is too slick to climb). Each ant has a preferred dig direction (`ddx`, `ddy`) chosen at birth, which is what makes tunnels branch outward and down.
 - Ant priorities: carrying sand → go up, drop it above ground. Carrying food → go to the queen. Otherwise → pick up adjacent food, else head for the nearest crumb within 75 cells (`foodList`, rebuilt every 15 steps), else dig.
 - Ants carrying food or chasing a target delete a blocking sand cell when stuck. This loses a little sand over time (about 400 of 17,000 cells in 11,000 steps). Accepted.
@@ -84,6 +86,7 @@ To republish from a Claude session: Artifact publish with the file path (same se
 
 - **2026-11-22, v1.2: day and night, visible ants, real speed.** Ants were near invisible on the dark-theme sky (1-pixel near-black ant on navy). Ants and queen are now outlined sprites drawn at 4× over the grid. Added a day/night cycle with sun, moon, stars and dusk colours, a night rest for idle workers, and a switch (key N) plus a Time stat. Added Real speed to the speed button. The loop now runs on wall-clock time. `tools/colony-test.js` takes day/night and speed arguments and reports walking speed.
 
+- **2026-11-22, v1.4: surface ants find their way home.** Idle surface workers used to walk toward `queen.x` and crowd on the ground above her chamber, unable to get down (10–11 ants on average, about a quarter of the colony). Ants now remember the hole they came out of and go back down it. Fixing that exposed two spoil problems, also fixed: a grain dropped above the ant built thin spires, and carriers steering upward built tall peaks.
 - **2026-11-22, v1.3: death and remains; no outlines.** Ants that die of age or drowning leave remains, which workers carry out of the nest and which crumble in about a day. The owner did not like the v1.2 outlines, so ants are now two-tone (black gaster, rust-red head and thorax) with no halo.
 
 ## 7. Traps already paid for
@@ -95,6 +98,8 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - After the session moved to `F:\Underfoot`, the app's `preview_start` **kept launching `serve.js` in the old temporary folder** and served the old file, even with `cwd` or absolute paths added to `launch.json` (the app reads the original folder's config). `preview_list` shows the server's `cwd`; check it. A new session opened directly in `F:\Underfoot` should not have this problem (not yet confirmed). Until then, test logic with `tools/colony-test.js`; the switch UI in v1.1 was checked by injecting its CSS into the old page. On 2026-11-22 (same session, resumed) it still served the old folder, so v1.2 was checked in headless Chrome instead (see section 4). Claude in Chrome cannot open `file://` URLs (it rewrites them to `https://file///…`).
 - Colony outcomes are bimodal and noisy: with 12 or 16 runs, trails looked both worse and better than no trails. Use 40 runs of 8000 steps before trusting a difference.
 - When the Claude app moves a session to a new folder it does not copy `.git` or `.claude`. After the move, the repo was rebuilt with `git init -b main`, `git remote add origin …`, `git fetch`, `git reset origin/main`, and `.claude/launch.json` was restored with `git checkout`. Check `git status` after any such move.
+- "Above ground" must not use `top[x]` directly: the entrance shaft is an open column, so `top` there is deep and an ant inside the shaft counted as on the surface. Sand carriers then dropped spoil inside the shaft, which is what kept plugging it in v1–v1.3. Use `ground`.
+- Fixing one spoil rule exposes the next. Sending ants home (v1.4) made spoil land on the surface instead of back in the shaft, and the surface grew spires (grain dropped above the ant) and then 25-cell peaks (carriers steering uphill). Check a screenshot after 10,000+ steps, plus `peaks()` and `spires()`, whenever ant movement on the surface changes. A median-based metric misses wide peaks; `peaks()` uses an absolute row.
 - Stats only refresh inside the `requestAnimationFrame` loop. Calling `step()` from the console does not update the numbers on screen until a frame renders.
 
 ## 8. How things are verified
@@ -146,13 +151,22 @@ v1.3, measured 2026-11-22 (headless Chrome, sampled from the rendered canvas; th
 
 Against tunnels (colour pairs, computed): by day black 2.3, red 1.9 (the red also differs in hue); at night red 3.2, black 1.4. Remains over 16,000 steps in 3 runs: 36–43 ants died; up to 15 different workers hauled a body; most deaths happen on the surface, so most remains end up there anyway. Colony, 40 runs × 8000 steps, trails and day/night on: 7/40 stalled, mean fed 42.7, peak workers 38.6 (v1.2: 7/40, 42.4, 39.0), so hauling bodies costs nothing measurable.
 
-Not verified: the v1.2/v1.3 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
+v1.4, measured 2026-11-22 (20 runs × 12,000 steps unless stated; scratch script sampling every 100 steps):
+
+| Build | Idle ants crowding above the queen | Idle ants near the surface | Peak columns (above row 28) | Highest sand row |
+| --- | --- | --- | --- | --- |
+| v1.3 | 10.0 | 14.2 | 4.0 | 27.2 |
+| v1.4 homing only (drop above, steer up) | 0.5 | 9.4 | 16.6 | 13.2 |
+| v1.4 | 0.1 | 4.0 | 0.1 | 30.9 |
+
+Colony, 40 runs × 8000 steps, day/night on: trails on 9/40 stalled, mean fed 42.2, peak workers 39.2; trails off 5/40, 47.2, 40.9. Real speed, 12 runs × 28,800 steps: 1/12 stalled, mean fed 50.5 (v1.2: 2/12, 40.1). The crowd fix did **not** reduce stalls: the stalled runs are nearly all "fed 0", a colony that never gets the first crumb home, which is a different failure. Screenshots at 11,500 steps show spoil spread as a low rough mound and ants spread along the surface.
+
+Not verified: the v1.2/v1.3/v1.4 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
 
 ## 9. Outstanding
 
-- About 1 run in 8 still stalls (fed under 20 after 8000 steps), with or without trails. Cause not yet diagnosed.
+- About 1 run in 6 still stalls (fed under 20 after 8000 steps), with or without trails. These are nearly all runs where the queen is fed nothing at all: the first crumbs never get home. Not the surface crowd (fixed in v1.4, stall rate unchanged). Cause not yet diagnosed; start by watching a fed-0 run in the first 2000 steps.
 - View the live artifact (now v1.2) and check trails, day/night, the ant sprites and Real speed there, ideally from a session opened directly in `F:\Underfoot` so the preview server serves this folder.
-- Idle workers on the surface head toward the queen's x position (`gx = sign(queen.x - a.x)`) and crowd on the ground above her chamber, unable to get down. With v1.3 the remains of those that die there pile up in that spot, which makes it visible. Possibly related to the stalled runs above; not investigated.
 - Ideas, not commitments: saving a farm, the day following the viewer's real clock in Real speed mode.
 
 ## 10. Code conventions

@@ -319,7 +319,8 @@ function addAnt(x, y) {
     trail: 0, bored: 0, nose: rnd() < 0.6, // trail: scent laid while carrying food; nose: follows trails
     hi: 999, stuck: 0, // highest row reached while carrying sand, and updates since it last improved
     acc: rnd(), // update budget; below 1 the ant waits this step (real speed)
-    load: 0 // decay of the remains it is carrying
+    load: 0, // decay of the remains it is carrying
+    up: false, ex: -1 // above ground last update; column it last came out of the nest by
   });
 }
 // Old age and drowning leave remains where the ant fell; whatever it carried is dropped beside it.
@@ -370,14 +371,21 @@ function updAnt(a) {
   if (trails && a.carry === FOOD && pher[i] < a.trail) pher[i] = a.trail; // lay scent on the way home
   if (rnd() < (night && !a.carry ? 0.65 : 0.35)) return true; // ants pause, and rest more after dark
 
-  const above = a.y < top[a.x];
+  // "Above" means above the ground line, which ignores narrow holes, so an ant in the entrance shaft is
+  // still inside. Crossing the line upward records the column it came out of: that is its way home.
+  const above = a.y < ground[a.x];
+  if (above !== a.up) { a.up = above; if (above) a.ex = a.x; if (a.carry === FOOD) a.hi = 999; }
   let gx = 0, gy = 0, digging = false;
 
   if (a.carry === SAND || a.carry === DEAD) {
-    // sand and the dead both go up and out; the dead are carried further from the entrance before being dropped
+    // sand and the dead both go up and out, and are carried a few cells clear of the hole before being
+    // dropped (the dead further), so the spoil heap does not slide back down the shaft
     gx = a.hx * 0.6; gy = -1;
-    if (above && rnd() < (a.carry === DEAD ? 0.02 : 0.07)) {
-      for (const [dx, dy] of [[0,-1],[-1,-1],[1,-1],[-a.hx,0],[a.hx,0]]) {
+    if (above) { gx = a.hx; gy = 0; } // out on the surface, walk along it rather than up the spoil heap
+    if (above && Math.abs(a.x - a.ex) > 3 && rnd() < (a.carry === DEAD ? 0.02 : 0.07)) {
+      // drop it beside the ant, not on top: a grain dropped above lands in the ant's own cell, the ant
+      // climbs onto it, and the next grain lands higher, which built thin spires of sand
+      for (const [dx, dy] of [[a.hx,0],[-a.hx,0],[a.hx,-1],[-a.hx,-1],[0,-1]]) {
         const j = idx(a.x + dx, a.y + dy);
         if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, a.carry, a.carry === DEAD ? a.load : 0, 0); a.carry = 0; a.hi = 999; break; }
       }
@@ -388,11 +396,14 @@ function updAnt(a) {
       else if (++a.stuck > 240) { a.stuck = 120; digToward(a, a.hx * 0.3, -1, false); }
     }
   } else if (a.carry === FOOD) {
-    gx = queen.x - a.x; gy = queen.y - a.y;
-    const dist = Math.hypot(gx, gy);
-    if (dist < 3.6) { a.carry = 0; a.hi = 999; queen.food++; queen.fed++; return true; }
+    if (Math.hypot(queen.x - a.x, queen.y - a.y) < 3.6) { a.carry = 0; a.hi = 999; queen.food++; queen.fed++; return true; }
+    // on the surface, go to the way in first; inside, go to the queen
+    const tx = above ? homeX(a) : queen.x, ty = above ? ground[tx] + 3 : queen.y;
+    gx = tx - a.x; gy = ty - a.y;
+    const dist = Math.hypot(gx, gy) || 1;
     gx /= dist; gy /= dist;
-    // same rescue as sand carriers: no progress toward the queen for a while, dig toward her
+    if (above && Math.abs(tx - a.x) <= 1) { gx = 0; gy = 1; }
+    // same rescue as sand carriers: no progress toward the goal for a while, dig toward it
     if (dist < a.hi - 0.5) { a.hi = dist; a.stuck = 0; }
     else if (++a.stuck > 240) { a.stuck = 120; digToward(a, gx, gy, false); }
   } else {
@@ -402,7 +413,7 @@ function updAnt(a) {
     }
     if (!above && rnd() < 0.3) for (const [dx, dy] of N8) { // remains inside the nest get carried out
       const j = idx(a.x + dx, a.y + dy);
-      if (j >= 0 && type[j] === DEAD && a.y + dy > top[a.x + dx]) { a.load = data[j]; type[j] = E; data[j] = 0; a.carry = DEAD; a.tx = -1; a.hi = 999; a.stuck = 0; return true; }
+      if (j >= 0 && type[j] === DEAD && a.y + dy > ground[a.x + dx]) { a.load = data[j]; type[j] = E; data[j] = 0; a.carry = DEAD; a.tx = -1; a.hi = 999; a.stuck = 0; return true; }
     }
     if ((frame + a.id) % 30 === 0) findFood(a);
     if (a.tx >= 0) {
@@ -411,8 +422,12 @@ function updAnt(a) {
       if (d < 1.5) a.tx = -1; else { gx /= d; gy /= d; }
     } else if (trails && a.nose && a.bored === 0 && sniff(a, i)) {
       gx = sniffX; gy = sniffY;
-    } else if (above) {
-      gx = Math.sign(queen.x - a.x) * 0.7 + a.hx * 0.3; gy = 0.6;
+    } else if (above) { // nothing to do up here: walk back to the way in and go down it
+      const hx = homeX(a);
+      if (Math.abs(hx - a.x) <= 1) {
+        gx = 0; gy = 1;
+        if (++a.stuck > 240) { a.stuck = 120; digToward(a, 0, 1, false); } // the way in is plugged: dig it open
+      } else { gx = Math.sign(hx - a.x) * 0.7 + a.hx * 0.3; gy = 0.6; a.stuck = 0; }
     } else {
       gx = a.ddx; gy = a.ddy; digging = true;
       if (rnd() < 0.0015) { a.ddx = -a.ddx; a.ddy = 0.1 + rnd() * 0.8; }
@@ -496,6 +511,27 @@ function computeTop() {
     while (y < H && !(type[y * W + x] === SAND || type[y * W + x] === STONE)) y++;
     top[x] = y;
   }
+  // ground: the median of top over 7 columns, so a hole up to 3 wide does not lower the surface line.
+  // holes: columns that open more than 2 cells below the ground line, i.e. ways into the nest.
+  holes.length = 0;
+  for (let x = 0; x < W; x++) {
+    for (let k = -3; k <= 3; k++) win[k + 3] = top[x + k < 0 ? 0 : x + k >= W ? W - 1 : x + k];
+    win.sort();
+    ground[x] = win[3];
+    if (top[x] > ground[x] + 2) holes.push(x);
+  }
+}
+const ground = new Int16Array(W), win = new Int16Array(7), holes = [];
+// Where an ant goes to get back underground: the hole it came out of if that is still open,
+// else the nearest open hole, else straight above the queen (where it will dig a new way in).
+function homeX(a) {
+  let best = -1, bd = 1e9;
+  for (const x of holes) {
+    if (a.ex >= 0 && Math.abs(x - a.ex) <= 1) return x;
+    const d = Math.abs(x - a.x);
+    if (d < bd) { bd = d; best = x; }
+  }
+  return best >= 0 ? best : queen.x;
 }
 function dayLight(h) {
   const s = t => t * t * (3 - 2 * t);
@@ -578,7 +614,7 @@ function render() {
     const sr = skyTop[0] + (skyBot[0] - skyTop[0]) * f, sg = skyTop[1] + (skyBot[1] - skyTop[1]) * f, sb = skyTop[2] + (skyBot[2] - skyTop[2]) * f;
     for (let x = 0; x < W; x++) {
       const i = y * W + x, v = (shade[i] - 128) / 16;
-      const under = y > top[x];
+      const under = y > (top[x] < ground[x] ? top[x] : ground[x]); // a shaft below the ground line draws as tunnel, not sky
       let c, t = type[i];
       if (t === DEAD) { deadCells.push(i); t = E; } // remains are drawn as sprites over open ground
       switch (t) {
@@ -590,7 +626,7 @@ function render() {
             r += (TRAIL[0] - r) * k; g += (TRAIL[1] - g) * k; b += (TRAIL[2] - b) * k;
           }
           if (under) { c = lit(r, g, b); break; }
-          if (stars > 0 && y < top[x] - 2) { // a fixed scatter of stars that twinkle
+          if (stars > 0 && y < ground[x] - 2) { // a fixed scatter of stars that twinkle
             const h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263)) >>> 0;
             if ((h >>> 8) % 1000 < 5) {
               const k = stars * (0.55 + 0.45 * Math.sin(frame * 0.03 + (h & 63)));
@@ -622,7 +658,7 @@ function render() {
     const cx = -8 + t * (W + 16), cy = 34 - 28 * Math.sin(Math.PI * t);
     for (let y = Math.floor(cy - r); y <= cy + r; y++) for (let x = Math.floor(cx - r); x <= cx + r; x++) {
       const j = idx(x, y);
-      if (j >= 0 && (x - cx) ** 2 + (y - cy) ** 2 <= r * r && type[j] === E && y < top[x]) buf[j] = col;
+      if (j >= 0 && (x - cx) ** 2 + (y - cy) ** 2 <= r * r && type[j] === E && y < top[x] && y < ground[x]) buf[j] = col;
     }
   }
   fctx.putImageData(img, 0, 0);
@@ -841,7 +877,9 @@ newFarm(); render(); stats();
 window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, list: () => ants, step, setTrails, setCycle, setSpeed, render,
   time: () => clock * 24 / DAY, setTime: h => { clock = (h / 24 * DAY) % DAY; setCycle(cycle); }, light: () => daylight,
   scent: () => pher.reduce((n, v) => n + (v > 0.02), 0),
-  remains: () => { const r = { inside: 0, outside: 0 }; for (let i = 0; i < N; i++) if (type[i] === DEAD) r[((i / W) | 0) > top[i % W] ? "inside" : "outside"]++; return r; }, count: t => type.reduce((n, v) => n + (v === t), 0) };
+  spires: () => { let n = 0; for (let x = 0; x < W; x++) if (top[x] < ground[x] - 5) n++; return n; }, // columns sticking up 6+ above the ground line
+  peaks: () => { let n = 0, hi = H; for (let x = 0; x < W; x++) { if (top[x] < 28) n++; if (top[x] < hi) hi = top[x]; } return { n, hi }; }, // columns piled 7+ cells above the starting surface's highest point; highest row
+  remains: () => { const r = { inside: 0, outside: 0 }; for (let i = 0; i < N; i++) if (type[i] === DEAD) r[((i / W) | 0) > ground[i % W] ? "inside" : "outside"]++; return r; }, count: t => type.reduce((n, v) => n + (v === t), 0) };
 requestAnimationFrame(loop);
 })();
 </script>
