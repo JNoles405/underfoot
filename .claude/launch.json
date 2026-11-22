@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "underfoot",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["serve.js", "underfoot.html"],
+      "port": 5291
+    }
+  ]
+}

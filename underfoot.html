@@ -1,0 +1,630 @@
+<title>Underfoot</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: a classic green-framed ant farm on the left, a tool tray on the right; stacks on phones. */
+:root {
+  --bg: #eef0e8;
+  --fg: #1e261f;
+  --muted: #5b685c;
+  --panel: #e2e7da;
+  --line: #cbd5c3;
+  --accent: #2f7d45;
+  --frame: #3c8a4e;
+  --frame-dark: #2a6638;
+  --chip: #f7f8f3;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111611; --fg: #e1e7dc; --muted: #98a597; --panel: #1a211a; --line: #2d382d;
+    --accent: #6cc283; --frame: #367345; --frame-dark: #24502f; --chip: #222a22;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111611; --fg: #e1e7dc; --muted: #98a597; --panel: #1a211a; --line: #2d382d;
+  --accent: #6cc283; --frame: #367345; --frame-dark: #24502f; --chip: #222a22;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 32px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(32px, 5vw, 48px); line-height: 1; margin: 0; letter-spacing: -0.02em; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px; }
+.stat { background: var(--panel); border-radius: 10px; padding: 6px 12px; min-width: 88px; }
+.stat span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.stat b { font-family: var(--font-mono); font-weight: 500; font-size: 18px; font-variant-numeric: tabular-nums; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+/* The farm: thick plastic frame, two glass panes implied by a sheen */
+.farm {
+  position: relative; background: var(--frame); border-radius: 14px; padding: 12px 12px 20px;
+  box-shadow: inset 0 -6px 0 var(--frame-dark), 0 1px 0 var(--line);
+  min-width: 0;
+}
+.farm::after {
+  content: ""; position: absolute; left: 12px; right: 12px; top: 12px; height: calc(100% - 32px);
+  border-radius: 4px; pointer-events: none;
+  background: linear-gradient(115deg, rgba(255,255,255,0.16) 0 8%, transparent 8% 20%, rgba(255,255,255,0.07) 20% 23%, transparent 23%);
+}
+canvas {
+  display: block; width: 100%; height: auto; aspect-ratio: 200 / 130; max-width: 100%;
+  image-rendering: pixelated; image-rendering: crisp-edges;
+  border-radius: 4px; touch-action: none; cursor: crosshair; background: #2c2118;
+}
+.legs { display: flex; justify-content: space-between; padding: 0 24px; margin-top: -2px; }
+.legs i { width: 28px; height: 8px; background: var(--frame-dark); border-radius: 0 0 6px 6px; }
+
+aside { background: var(--panel); border-radius: 14px; padding: 16px; display: grid; gap: 16px; min-width: 0; }
+aside h2 { font-family: var(--font-display); font-weight: 500; font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 8px; color: var(--muted); }
+.tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+@media (max-width: 860px) { .tools { grid-template-columns: repeat(3, 1fr); } }
+.tool {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--chip); color: var(--fg);
+  font: 500 14px var(--font-body); cursor: pointer; text-align: left; min-width: 0;
+}
+.tool .sw { width: 14px; height: 14px; border-radius: 4px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.18); }
+.tool kbd { margin-left: auto; font: 500 11px var(--font-mono); color: var(--muted); }
+.tool[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.brush { display: grid; gap: 4px; }
+.brush label { display: flex; justify-content: space-between; font-weight: 500; }
+.brush output { font-family: var(--font-mono); color: var(--muted); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.row { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn {
+  flex: 1 1 auto; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--chip); color: var(--fg); font: 600 14px var(--font-body); cursor: pointer;
+}
+.btn:hover, .tool:hover { border-color: var(--accent); }
+.btn[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.notes { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; font-size: 13.5px; color: var(--muted); }
+.notes b { color: var(--fg); font-weight: 600; }
+.foot { font-size: 13px; color: var(--muted); margin: 0; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Underfoot</h1>
+      <p class="lede">An ant farm between two panes of glass. The colony digs on its own. Drop crumbs on the surface and the workers carry them down to the queen, who lays eggs that hatch into more diggers.</p>
+    </div>
+    <div class="stats" aria-live="polite">
+      <div class="stat"><span>Workers</span><b id="sAnts">0</b></div>
+      <div class="stat"><span>Eggs</span><b id="sEggs">0</b></div>
+      <div class="stat"><span>Fed queen</span><b id="sFed">0</b></div>
+      <div class="stat"><span>Tunnel cm</span><b id="sTunnel">0</b></div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <div>
+      <div class="farm">
+        <canvas id="c" width="200" height="130" aria-label="Ant farm. Click or drag to drop the selected material."></canvas>
+      </div>
+      <div class="legs" aria-hidden="true"><i></i><i></i></div>
+    </div>
+
+    <aside>
+      <div>
+        <h2>Drop in</h2>
+        <div class="tools" id="tools" role="radiogroup" aria-label="Material"></div>
+      </div>
+      <div class="brush">
+        <label for="brush">Brush size <output id="brushOut" for="brush">4</output></label>
+        <input type="range" id="brush" min="1" max="10" value="4">
+      </div>
+      <div class="row">
+        <button class="btn" id="pause" aria-pressed="false">Pause</button>
+        <button class="btn" id="speed">Speed 1×</button>
+        <button class="btn" id="reset">New farm</button>
+      </div>
+      <div>
+        <h2>Field notes</h2>
+        <ul class="notes">
+          <li><b>Packed sand holds.</b> Tunnels keep their shape. Sand you pour is loose until it lands.</li>
+          <li><b>Two crumbs, one egg.</b> The queen lays when fed. Eggs hatch in about 20 seconds.</li>
+          <li><b>Water soaks in.</b> Wet sand darkens and slowly dries. Ants that stay under water too long drown.</li>
+          <li><b>Workers age.</b> Each lives a few minutes, so keep the crumbs coming.</li>
+        </ul>
+      </div>
+      <p class="foot">Keys 1 to 6 pick a material. Space pauses.</p>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const W = 200, H = 130, N = W * H;
+const E = 0, SAND = 1, STONE = 2, WATER = 3, FOOD = 4, EGG = 5;
+const DENS = [0, 5, 255, 2, 5, 5];
+const MAX_ANTS = 260;
+
+const type = new Uint8Array(N), data = new Uint8Array(N), shade = new Uint8Array(N), flag = new Uint8Array(N);
+const stamp = new Uint32Array(N);
+const top = new Int16Array(W);
+let frame = 0;
+let ants = [];
+let queen = { x: 120, y: 101, food: 0, fed: 0 };
+let foodList = [];
+let rainFed = 0;
+const rnd = Math.random;
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const img = ctx.createImageData(W, H);
+const buf = new Uint32Array(img.data.buffer);
+
+function idx(x, y) { return (x < 0 || y < 0 || x >= W || y >= H) ? -1 : y * W + x; }
+function swap(a, b) {
+  let t = type[a]; type[a] = type[b]; type[b] = t;
+  t = data[a]; data[a] = data[b]; data[b] = t;
+  t = shade[a]; shade[a] = shade[b]; shade[b] = t;
+  t = flag[a]; flag[a] = flag[b]; flag[b] = t;
+  stamp[a] = stamp[b] = frame;
+}
+function setCell(i, t, d = 0, f = 0) { type[i] = t; data[i] = d; flag[i] = f; shade[i] = (rnd() * 255) | 0; stamp[i] = frame; }
+function isSolid(t) { return t === SAND || t === STONE || t === FOOD || t === EGG; }
+function isAnchor(j) { const t = type[j]; return t === STONE || (t === SAND && flag[j] === 1); }
+function passable(x, y) { const j = idx(x, y); return j >= 0 && (type[j] === E || type[j] === WATER) && !inQueen(x, y); }
+function inQueen(x, y) { return x >= queen.x - 1 && x <= queen.x + 1 && y >= queen.y - 1 && y <= queen.y; }
+function supported(x, y) {
+  if (y >= H - 1) return true;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    if (!dx && !dy) continue;
+    const j = idx(x + dx, y + dy);
+    if (j >= 0 && isSolid(type[j])) return true;
+  }
+  return false;
+}
+
+/* ---------- particles ---------- */
+function updSand(i, x, y) {
+  if (y === H - 1) { flag[i] = 1; return; }
+  const b = i + W, tb = type[b];
+  if (flag[i] === 0) {
+    if (DENS[tb] < 5) { swap(i, b); return; }
+    if (rnd() < 0.7) {
+      const d = rnd() < 0.5 ? -1 : 1;
+      for (let k = 0; k < 2; k++) {
+        const s = k ? -d : d, nx = x + s;
+        if (nx < 0 || nx >= W) continue;
+        if (DENS[type[b + s]] < 5 && DENS[type[i + s]] < 5) { swap(i, b + s); return; }
+      }
+    }
+    flag[i] = 1;
+  } else if (DENS[tb] < 5) {
+    const l = x === 0 || isAnchor(i - 1), r = x === W - 1 || isAnchor(i + 1);
+    if (l && r) return;
+    if ((l || r) && rnd() > 0.0006) return;
+    flag[i] = 0; swap(i, b); return;
+  }
+  // moisture: spread to a neighbour, dry slowly
+  if (data[i] > 0) {
+    if (y > 0 && type[i - W] === E && rnd() < 0.01) data[i]--; // only exposed sand dries
+    if (data[i] > 24 && rnd() < 0.08) {
+      const k = (rnd() * 4) | 0;
+      const j = k === 0 ? i + W : k === 1 ? i - W : k === 2 ? i - 1 : i + 1;
+      if (j >= 0 && j < N && type[j] === SAND && data[j] + 12 < data[i]) {
+        const tr = (data[i] - data[j]) >> 1; data[i] -= tr; data[j] += tr;
+      }
+    }
+  }
+}
+function updPowder(i, x, y, diag) {
+  if (y === H - 1) return;
+  const b = i + W;
+  if (DENS[type[b]] < 5) { swap(i, b); return; }
+  if (rnd() < diag) {
+    const s = rnd() < 0.5 ? -1 : 1, nx = x + s;
+    if (nx >= 0 && nx < W && DENS[type[b + s]] < 5 && DENS[type[i + s]] < 5) swap(i, b + s);
+  }
+}
+function updWater(i, x, y) {
+  if (rnd() < 0.012) {
+    const k = (rnd() * 4) | 0;
+    const nx = x + (k === 2 ? -1 : k === 3 ? 1 : 0), ny = y + (k === 0 ? 1 : k === 1 ? -1 : 0);
+    const j = idx(nx, ny);
+    if (j >= 0 && type[j] === SAND && data[j] < 190) { data[j] = Math.min(255, data[j] + 110); type[i] = E; return; }
+  }
+  if (y < H - 1 && type[i + W] === E) { swap(i, i + W); return; }
+  const d = rnd() < 0.5 ? -1 : 1;
+  if (y < H - 1) for (let k = 0; k < 2; k++) {
+    const s = k ? -d : d, nx = x + s;
+    if (nx >= 0 && nx < W && type[i + W + s] === E && type[i + s] === E) { swap(i, i + W + s); return; }
+  }
+  for (let k = 0; k < 2; k++) {
+    const s = k ? -d : d; let best = -1;
+    for (let step = 1; step <= 3; step++) {
+      const nx = x + s * step; if (nx < 0 || nx >= W) break;
+      const j = i + s * step; if (type[j] !== E) break;
+      best = j;
+      if (y < H - 1 && type[j + W] === E) break;
+    }
+    if (best >= 0) { swap(i, best); return; }
+  }
+}
+function updEgg(i, x, y) {
+  if ((frame & 3) === 0) {
+    if (data[i] >= 255) { type[i] = E; data[i] = 0; addAnt(x, y); return; }
+    data[i]++;
+  }
+  updPowder(i, x, y, 0.3);
+}
+
+/* ---------- ants ---------- */
+function addAnt(x, y) {
+  if (ants.length >= MAX_ANTS) return;
+  ants.push({
+    x, y, hx: rnd() < 0.5 ? -1 : 1, carry: 0, age: 0,
+    life: 7200 + rnd() * 6000, wet: 0,
+    ddx: (rnd() < 0.5 ? -1 : 1) * (0.25 + rnd() * 0.75), ddy: 0.25 + rnd() * 0.75,
+    tx: -1, ty: -1, id: (rnd() * 1e6) | 0
+  });
+}
+const N8 = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
+
+function digToward(a, gx, gy, keep) {
+  let best = -1, bd = 0.35;
+  for (const [dx, dy] of N8) {
+    const j = idx(a.x + dx, a.y + dy);
+    if (j < 0 || type[j] !== SAND) continue;
+    const d = (dx * gx + dy * gy) / Math.hypot(dx, dy);
+    if (d > bd) { bd = d; best = j; }
+  }
+  if (best < 0) return false;
+  if (keep && !a.carry) a.carry = SAND;
+  type[best] = E; data[best] = 0; flag[best] = 0;
+  return true;
+}
+
+function updAnt(a) {
+  a.age++;
+  if (a.age > a.life) return false;
+  const i = a.y * W + a.x, t = type[i];
+  if (isSolid(t)) { // buried: dig out
+    if (t === SAND && !a.carry) { a.carry = SAND; type[i] = E; }
+    else if (passable(a.x, a.y - 1)) a.y--;
+    else if (t === SAND) type[i] = E;
+    return true;
+  }
+  if (t === WATER) {
+    if (++a.wet > 320) return false;
+    if (rnd() < 0.25 && passable(a.x, a.y - 1)) a.y--;
+    if (rnd() < 0.5) return true;
+  } else if (a.wet > 0) a.wet -= 2;
+
+  if (!supported(a.x, a.y)) { if (passable(a.x, a.y + 1)) a.y++; return true; }
+  if (rnd() < 0.35) return true; // ants pause
+
+  const above = a.y < top[a.x];
+  let gx = 0, gy = 0, digging = false;
+
+  if (a.carry === SAND) {
+    gx = a.hx * 0.6; gy = -1;
+    if (above && rnd() < 0.07) {
+      for (const [dx, dy] of [[0,-1],[-1,-1],[1,-1],[-a.hx,0],[a.hx,0]]) {
+        const j = idx(a.x + dx, a.y + dy);
+        if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, SAND, 0, 0); a.carry = 0; break; }
+      }
+    }
+  } else if (a.carry === FOOD) {
+    gx = queen.x - a.x; gy = queen.y - a.y;
+    const dist = Math.hypot(gx, gy);
+    if (dist < 3.6) { a.carry = 0; queen.food++; queen.fed++; return true; }
+    gx /= dist; gy /= dist;
+  } else {
+    for (const [dx, dy] of N8) {
+      const j = idx(a.x + dx, a.y + dy);
+      if (j >= 0 && type[j] === FOOD) { type[j] = E; a.carry = FOOD; a.tx = -1; return true; }
+    }
+    if ((frame + a.id) % 30 === 0) findFood(a);
+    if (a.tx >= 0) {
+      gx = a.tx - a.x; gy = a.ty - a.y;
+      const d = Math.hypot(gx, gy);
+      if (d < 1.5) a.tx = -1; else { gx /= d; gy /= d; }
+    } else if (above) {
+      gx = Math.sign(queen.x - a.x) * 0.7 + a.hx * 0.3; gy = 0.6;
+    } else {
+      gx = a.ddx; gy = a.ddy; digging = true;
+      if (rnd() < 0.0015) { a.ddx = -a.ddx; a.ddy = 0.1 + rnd() * 0.8; }
+      if (a.y > H - 8) a.ddy = -0.2;
+    }
+  }
+
+  if (digging && !a.carry && rnd() < 0.14 && digToward(a, gx, gy, true)) return true;
+
+  let bx = 0, by = 0, bs = -1e9;
+  for (const [dx, dy] of N8) {
+    const nx = a.x + dx, ny = a.y + dy;
+    if (!passable(nx, ny) || !supported(nx, ny)) continue;
+    let s = (dx * gx + dy * gy) / Math.hypot(dx, dy) + rnd() * 0.9 + (dx === a.hx ? 0.25 : 0);
+    if (type[ny * W + nx] === WATER) s -= 0.6;
+    if (s > bs) { bs = s; bx = dx; by = dy; }
+  }
+  if (bs > -1e9) {
+    a.x += bx; a.y += by; if (bx) a.hx = bx;
+    // goal-driven ants push through sand when the way is blocked
+    if (bs < 0.2 && (a.carry === FOOD || a.tx >= 0) && rnd() < 0.08) digToward(a, gx, gy, false);
+  } else {
+    a.hx = -a.hx;
+    if (rnd() < 0.1) digToward(a, gx, gy, !a.carry);
+  }
+  return true;
+}
+function findFood(a) {
+  let best = 75 * 75, bi = -1;
+  for (const j of foodList) {
+    const fx = j % W, fy = (j / W) | 0, d = (fx - a.x) ** 2 + (fy - a.y) ** 2;
+    if (d < best) { best = d; bi = j; }
+  }
+  if (bi >= 0) { a.tx = bi % W; a.ty = (bi / W) | 0; } else a.tx = -1;
+}
+
+/* ---------- queen ---------- */
+let eggCount = 0;
+function updQueen() {
+  for (let y = queen.y - 1; y <= queen.y; y++) for (let x = queen.x - 1; x <= queen.x + 1; x++) {
+    const j = idx(x, y);
+    if (j >= 0 && (type[j] === SAND || type[j] === FOOD)) { type[j] = E; data[j] = 0; flag[j] = 0; }
+  }
+  if ((frame & 3) === 0 && queen.y < H - 1) {
+    let free = true;
+    for (let x = queen.x - 1; x <= queen.x + 1; x++) { const j = idx(x, queen.y + 1); if (j < 0 || isSolid(type[j])) free = false; }
+    if (free) queen.y++;
+  }
+  if (queen.food >= 2 && eggCount < 40) {
+    for (let tries = 0; tries < 20; tries++) {
+      const x = queen.x + ((rnd() * 13) | 0) - 6, y = queen.y + ((rnd() * 5) | 0) - 3;
+      const j = idx(x, y);
+      if (j >= 0 && type[j] === E && !inQueen(x, y)) { setCell(j, EGG, 0, 0); queen.food -= 2; eggCount++; break; }
+    }
+  }
+}
+
+/* ---------- step ---------- */
+function computeTop() {
+  for (let x = 0; x < W; x++) {
+    let y = 0;
+    while (y < H && !(type[y * W + x] === SAND || type[y * W + x] === STONE)) y++;
+    top[x] = y;
+  }
+}
+function step() {
+  frame++;
+  for (let y = H - 1; y >= 0; y--) {
+    const ltr = (frame + y) & 1;
+    for (let k = 0; k < W; k++) {
+      const x = ltr ? k : W - 1 - k, i = y * W + x;
+      if (stamp[i] === frame) continue;
+      switch (type[i]) {
+        case SAND: updSand(i, x, y); break;
+        case WATER: updWater(i, x, y); break;
+        case FOOD: updPowder(i, x, y, 0.45); break;
+        case EGG: updEgg(i, x, y); break;
+      }
+    }
+  }
+  computeTop();
+  if (frame % 15 === 0) {
+    foodList = []; eggCount = 0;
+    for (let i = 0; i < N; i++) {
+      if (type[i] === FOOD && foodList.length < 1500) foodList.push(i);
+      else if (type[i] === EGG) eggCount++;
+    }
+  }
+  updQueen();
+  ants = ants.filter(updAnt);
+}
+
+/* ---------- drawing ---------- */
+let dark = false;
+const skyTop = [0,0,0], skyBot = [0,0,0];
+function readTheme() {
+  const t = document.documentElement.getAttribute("data-theme");
+  dark = t === "dark" ? true : t === "light" ? false : matchMedia("(prefers-color-scheme: dark)").matches;
+  const a = dark ? [16, 24, 40] : [196, 222, 232], b = dark ? [34, 44, 58] : [232, 238, 226];
+  skyTop.splice(0, 3, ...a); skyBot.splice(0, 3, ...b);
+}
+readTheme();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readTheme);
+new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+const FOODC = [[244, 238, 222], [212, 146, 76], [150, 196, 92]];
+function px(r, g, b) {
+  r = r < 0 ? 0 : r > 255 ? 255 : r | 0; g = g < 0 ? 0 : g > 255 ? 255 : g | 0; b = b < 0 ? 0 : b > 255 ? 255 : b | 0;
+  return 0xff000000 | (b << 16) | (g << 8) | r;
+}
+function render() {
+  for (let y = 0; y < H; y++) {
+    const f = y / H;
+    const sr = skyTop[0] + (skyBot[0] - skyTop[0]) * f, sg = skyTop[1] + (skyBot[1] - skyTop[1]) * f, sb = skyTop[2] + (skyBot[2] - skyTop[2]) * f;
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x, v = (shade[i] - 128) / 16;
+      const under = y > top[x];
+      let c;
+      switch (type[i]) {
+        case E: c = under ? px(104 + v * 0.5, 78 + v * 0.4, 54) : px(sr, sg, sb); break;
+        case SAND: {
+          const m = data[i] / 255;
+          c = px(214 - 74 * m + v * 2.2, 180 - 68 * m + v * 2, 122 - 52 * m + v * 1.5); break;
+        }
+        case STONE: c = px(126 + v * 3, 124 + v * 3, 120 + v * 3); break;
+        case WATER: {
+          const surf = y > 0 && type[i - W] !== WATER;
+          c = under ? px(48, 98 + v, 158 + v) : px(surf ? 98 : 70, surf ? 162 : 138, surf ? 222 : 204);
+          break;
+        }
+        case FOOD: { const k = FOODC[data[i] % 3]; c = px(k[0] + v, k[1] + v, k[2] + v); break; }
+        case EGG: c = px(250, 246, 230 - data[i] / 12); break;
+        default: c = px(255, 0, 255);
+      }
+      buf[i] = c;
+    }
+  }
+  // ants and what they carry
+  for (const a of ants) {
+    const i = a.y * W + a.x;
+    buf[i] = a.wet > 0 && type[i] === WATER ? px(24, 24, 44) : px(20, 10, 8);
+    if (a.carry && a.y > 0) {
+      const j = i - W;
+      buf[j] = a.carry === SAND ? px(232, 200, 140) : px(240, 214, 150);
+    }
+  }
+  // queen: 3 x 2, head toward her heading
+  const q = [[-1, -1, 74, 34, 22], [0, -1, 88, 42, 26], [1, -1, 40, 20, 14], [-1, 0, 70, 30, 20], [0, 0, 82, 38, 24], [1, 0, 46, 22, 16]];
+  for (const [dx, dy, r, g, b] of q) { const j = idx(queen.x + dx, queen.y + dy); if (j >= 0) buf[j] = px(r, g, b); }
+  ctx.putImageData(img, 0, 0);
+}
+
+/* ---------- scene ---------- */
+function newFarm() {
+  type.fill(0); data.fill(0); flag.fill(0); stamp.fill(0); ants = []; frame = 0;
+  for (let i = 0; i < N; i++) shade[i] = (rnd() * 255) | 0;
+  for (let x = 0; x < W; x++) {
+    const s = Math.round(40 + 3 * Math.sin(x / 17) + 2 * Math.sin(x / 7 + 1));
+    for (let y = s; y < H; y++) {
+      const i = y * W + x;
+      type[i] = y >= H - 2 ? STONE : SAND; flag[i] = 1;
+      data[i] = Math.min(255, (y - s) * 1.1 + rnd() * 20) | 0;
+    }
+  }
+  for (let p = 0; p < 9; p++) { // pebbles
+    const cx = 10 + rnd() * (W - 20), cy = 55 + rnd() * (H - 70), r = 1.5 + rnd() * 3;
+    for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++)
+      if (x * x + y * y * 1.6 <= r * r) { const j = idx((cx + x) | 0, (cy + y) | 0); if (j >= 0) type[j] = STONE; }
+  }
+  // queen's chamber and an entrance shaft
+  queen = { x: 122, y: 101, food: 0, fed: 0 };
+  for (let y = -4; y <= 3; y++) for (let x = -8; x <= 8; x++)
+    if ((x * x) / 64 + (y * y) / 12 <= 1) { const j = idx(queen.x + x, 98 + y); if (j >= 0) { type[j] = E; data[j] = 0; } }
+  let sx = 96, sy = 30;
+  while (sy < 98) {
+    for (let w = 0; w < 2; w++) { const j = idx(sx + w, sy); if (j >= 0 && type[j] !== STONE) type[j] = E; }
+    sy++;
+    sx += Math.sign(queen.x - sx) * (rnd() < 0.45 ? 1 : 0) + (rnd() < 0.15 ? (rnd() < 0.5 ? -1 : 1) : 0);
+  }
+  for (let y = 99; y <= 101; y++) for (let x = queen.x - 1; x <= queen.x + 1; x++) { const j = idx(x, y); if (type[j] === SAND) type[j] = E; }
+  for (let y = 102; y <= 103; y++) for (let x = queen.x - 2; x <= queen.x + 2; x++) { const j = idx(x, y); type[j] = SAND; flag[j] = 1; }
+  for (let k = 0; k < 16; k++) addAnt(queen.x - 6 + ((rnd() * 12) | 0), 97 + ((rnd() * 3) | 0));
+  // a crumb pile on the surface and a few eggs
+  for (let k = 0; k < 70; k++) {
+    const x = 36 + ((rnd() * 14) | 0), y = 20 + ((rnd() * 10) | 0), j = idx(x, y);
+    if (type[j] === E) setCell(j, FOOD, (rnd() * 3) | 0);
+  }
+  for (let k = 0; k < 4; k++) { const j = idx(queen.x - 6 + k * 3, 100); if (type[j] === E) setCell(j, EGG, (rnd() * 120) | 0); }
+  computeTop();
+  const t0 = performance.now();
+  for (let k = 0; k < 900 && performance.now() - t0 < 1400; k++) step();
+}
+
+/* ---------- tools ---------- */
+const TOOLS = [
+  { id: SAND, name: "Sand", color: "#d6b47a", key: "1" },
+  { id: WATER, name: "Water", color: "#468acc", key: "2" },
+  { id: FOOD, name: "Crumbs", color: "#d4924c", key: "3" },
+  { id: "ant", name: "Ants", color: "#1c100c", key: "4" },
+  { id: STONE, name: "Stone", color: "#7e7c78", key: "5" },
+  { id: "erase", name: "Eraser", color: "transparent", key: "6" },
+];
+let tool = FOOD, brush = 4, paused = false, speed = 1, down = false, px0 = -1, py0 = -1, cur = null;
+const toolsEl = document.getElementById("tools");
+TOOLS.forEach((t, n) => {
+  const b = document.createElement("button");
+  b.className = "tool"; b.id = "tool-" + n; b.setAttribute("role", "radio");
+  b.innerHTML = `<span class="sw" style="background:${t.color}"></span>${t.name}<kbd>${t.key}</kbd>`;
+  b.addEventListener("click", () => pick(t.id));
+  toolsEl.appendChild(b);
+});
+function pick(id) {
+  tool = id;
+  [...toolsEl.children].forEach((b, n) => b.setAttribute("aria-checked", String(TOOLS[n].id === id)));
+}
+pick(FOOD);
+
+function paintAt(cx, cy) {
+  const r = brush - 0.5;
+  for (let dy = -brush; dy <= brush; dy++) for (let dx = -brush; dx <= brush; dx++) {
+    if (dx * dx + dy * dy > r * r) continue;
+    const x = cx + dx, y = cy + dy, j = idx(x, y);
+    if (j < 0) continue;
+    if (tool === "erase") { if (!inQueen(x, y)) { type[j] = E; data[j] = 0; flag[j] = 0; } continue; }
+    if (tool === "ant") { if (rnd() < 0.03 && passable(x, y)) addAnt(x, y); continue; }
+    if (type[j] !== E || inQueen(x, y)) continue;
+    if (tool === SAND && rnd() < 0.55) setCell(j, SAND, 0, 0);
+    else if (tool === WATER && rnd() < 0.5) setCell(j, WATER);
+    else if (tool === FOOD && rnd() < 0.12) setCell(j, FOOD, (rnd() * 3) | 0);
+    else if (tool === STONE) setCell(j, STONE);
+  }
+  if (tool === "erase") ants = ants.filter(a => (a.x - cx) ** 2 + (a.y - cy) ** 2 > r * r);
+}
+function cellFrom(e) {
+  const rc = canvas.getBoundingClientRect();
+  return [Math.floor((e.clientX - rc.left) / rc.width * W), Math.floor((e.clientY - rc.top) / rc.height * H)];
+}
+function strokeTo(x, y) {
+  if (px0 < 0) { paintAt(x, y); }
+  else {
+    const n = Math.max(Math.abs(x - px0), Math.abs(y - py0), 1);
+    for (let k = 1; k <= n; k++) paintAt(Math.round(px0 + (x - px0) * k / n), Math.round(py0 + (y - py0) * k / n));
+  }
+  px0 = x; py0 = y;
+}
+canvas.addEventListener("pointerdown", e => { down = true; canvas.setPointerCapture(e.pointerId); px0 = -1; cur = cellFrom(e); strokeTo(...cur); });
+canvas.addEventListener("pointermove", e => { if (!down) return; cur = cellFrom(e); strokeTo(...cur); });
+const end = () => { down = false; px0 = -1; cur = null; };
+canvas.addEventListener("pointerup", end); canvas.addEventListener("pointercancel", end);
+
+const brushEl = document.getElementById("brush"), brushOut = document.getElementById("brushOut");
+brushEl.addEventListener("input", () => { brush = +brushEl.value; brushOut.textContent = brush; });
+const pauseEl = document.getElementById("pause");
+function setPaused(p) { paused = p; pauseEl.setAttribute("aria-pressed", String(p)); pauseEl.textContent = p ? "Resume" : "Pause"; }
+pauseEl.addEventListener("click", () => setPaused(!paused));
+const speedEl = document.getElementById("speed");
+speedEl.addEventListener("click", () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; speedEl.textContent = `Speed ${speed}×`; });
+document.getElementById("reset").addEventListener("click", () => { newFarm(); render(); });
+addEventListener("keydown", e => {
+  if (e.target instanceof HTMLInputElement) return;
+  const t = TOOLS.find(t => t.key === e.key);
+  if (t) { pick(t.id); return; }
+  if (e.key === " " && e.target === document.body) { e.preventDefault(); setPaused(!paused); }
+});
+
+/* ---------- stats + loop ---------- */
+const sAnts = document.getElementById("sAnts"), sEggs = document.getElementById("sEggs"), sFed = document.getElementById("sFed"), sTunnel = document.getElementById("sTunnel");
+function stats() {
+  let tunnel = 0;
+  for (let x = 0; x < W; x++) for (let y = top[x] + 1; y < H; y++) if (type[y * W + x] === E) tunnel++;
+  sAnts.textContent = ants.length; sEggs.textContent = eggCount; sFed.textContent = queen.fed;
+  sTunnel.textContent = Math.round(tunnel / 10); // 10 cells ≈ 1 cm of tunnel, at roughly 1 mm a cell
+}
+function loop() {
+  if (!paused) {
+    for (let k = 0; k < speed; k++) step();
+    if (down && cur && (tool !== SAND || frame % 2 === 0)) paintAt(...cur);
+  }
+  render();
+  if (frame % 15 === 0 || paused) stats();
+  requestAnimationFrame(loop);
+}
+newFarm(); render(); stats();
+window.__underfoot = { get ants() { return ants.length; }, get frame() { return frame; }, queen: () => queen, step, count: t => type.reduce((n, v) => n + (v === t), 0) };
+requestAnimationFrame(loop);
+})();
+</script>
