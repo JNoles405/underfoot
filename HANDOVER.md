@@ -49,6 +49,8 @@ The page exposes a debug handle for measurement: `window.__underfoot`
 Headless colony test (no browser needed): `node tools/colony-test.js underfoot.html 40 8000 on on 1`
 (arguments after the step count: trails `on|off`, day/night `on|off`, speed `1|real`). It runs the page's script in Node with the DOM stubbed out (any canvas call is a no-op) and also prints the ants' walking speed in cells per step. Type ids: 0 empty, 1 sand, 2 stone, 3 water, 4 food, 5 egg, 6 remains.
 
+Seeded runs: `node tools/seed-runs.js underfoot.html 60 6000` replays the same farms on every build (seed 1..n), so a bad run can be found, traced (`... 60 6000 4` snapshots seed 4 every 250 steps) and compared before and after a change. It reports `firstOut`, the first step any ant stood above ground (-1 = never). A change that adds or removes `rnd()` calls before or during `newFarm()` changes every seed's farm, so compare totals then, not seed by seed.
+
 Rendering in a real browser without the app's preview: build a wrapper file (doctype + `<body>` + the page + a test `<script>`) and run headless Chrome on it, e.g.
 `chrome.exe --headless=new --virtual-time-budget=4000 --screenshot=out.png --window-size=1280,900 file:///…/wrapper.html`
 or `--dump-dom` to read results the test script writes into the page. Under `--virtual-time-budget`, `performance.now()` does not advance during script execution, so time code in Node instead. Headless Chrome will not make the viewport narrower than 500 px.
@@ -92,9 +94,12 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - **2026-11-22, v1.4: surface ants find their way home.** Idle surface workers used to walk toward `queen.x` and crowd on the ground above her chamber, unable to get down (10–11 ants on average, about a quarter of the colony). Ants now remember the hole they came out of and go back down it. Fixing that exposed two spoil problems, also fixed: a grain dropped above the ant built thin spires, and carriers steering upward built tall peaks.
 - **2026-11-22, v1.3: death and remains; no outlines.** Ants that die of age or drowning leave remains, which workers carry out of the nest and which crumble in about a day. The owner did not like the v1.2 outlines, so ants are now two-tone (black gaster, rust-red head and thorax) with no halo.
 
+- **2026-11-23, v1.5: no more walled-in colonies.** The remaining stalls (about 1 run in 6, all fed 0) were farms where a pebble lands across the starting entrance shaft. The shaft carving in `newFarm()` skipped stone, so the shaft dead-ended under the pebble; ants cannot dig stone, every worker climbing out with sand got stuck beneath it, and no ant ever reached the surface or the crumbs. The shaft now cuts through pebbles. Added `tools/seed-runs.js`.
 - **2026-11-23, Vercel site.** The repo is also deployed on Vercel, whose root showed a 404. Added `vercel.json` and `tools/build-site.js` to build `dist/index.html` from the page and the shared skeleton in `tools/wrap.js`; `serve.js` uses the same skeleton.
 
 ## 7. Traps already paid for
+
+- **Stone is permanent to ants.** Anything that must stay open for the colony to live (the starting shaft, the chamber) has to be carved through stone, not around it. A pebble across the only shaft starved 9 of 60 seeded farms before v1.5. Finding it took seeded runs: the stalls looked like a feeding problem, but `firstOut` was -1 in every one.
 
 - The Vercel site at first showed a 404 at its root (2026-11-23): Vercel serves `index.html`, the repo had only `underfoot.html`, and that file has no doctype or charset by design. Fixed with the build step in section 4; keep the skeleton in `tools/wrap.js` so the local preview and the site cannot drift apart.
 
@@ -168,12 +173,13 @@ v1.4, measured 2026-11-22 (20 runs × 12,000 steps unless stated; scratch script
 
 Colony, 40 runs × 8000 steps, day/night on: trails on 9/40 stalled, mean fed 42.2, peak workers 39.2; trails off 5/40, 47.2, 40.9. Real speed, 12 runs × 28,800 steps: 1/12 stalled, mean fed 50.5 (v1.2: 2/12, 40.1). The crowd fix did **not** reduce stalls: the stalled runs are nearly all "fed 0", a colony that never gets the first crumb home, which is a different failure. Screenshots at 11,500 steps show spoil spread as a low rough mound and ants spread along the surface.
 
-Not verified: the v1.2/v1.3/v1.4 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
+v1.5, seeded (`tools/seed-runs.js`, 60 seeds × 6000 steps): before, 9/60 fed 0, every one with `firstOut` -1 and the shaft blocked by stone; after, 0/60 under 20, mean fed 44.7 → 52.9, and those 9 seeds fed 25–57. Colony, 40 runs × 8000 steps, day/night on: trails on 0/40 stalled, mean fed 53.6, peak workers 45.1 (v1.4: 9/40, 42.2, 39.2); trails off 1/40, 52.0 (v1.4: 5/40, 47.2). Real speed, 12 runs × 28,800 steps: 0/12 stalled, mean fed 44.9 (v1.4: 1/12, 50.5; 12 long runs are noisy, two fed only 20 and 23). The built page rendered in headless Chrome with the queen fed.
+
+Not verified: the v1.2–v1.5 page in the app's own browser pane or the live artifact, real touch input, and the frame rate on a 120 Hz screen.
 
 ## 9. Outstanding
 
-- About 1 run in 6 still stalls (fed under 20 after 8000 steps), with or without trails. These are nearly all runs where the queen is fed nothing at all: the first crumbs never get home. Not the surface crowd (fixed in v1.4, stall rate unchanged). Cause not yet diagnosed; start by watching a fed-0 run in the first 2000 steps.
-- View the live artifact (now v1.2) and check trails, day/night, the ant sprites and Real speed there, ideally from a session opened directly in `F:\Underfoot` so the preview server serves this folder.
+- View the live artifact (now v1.5) and check trails, day/night, the ant sprites and Real speed there, ideally from a session opened directly in `F:\Underfoot` so the preview server serves this folder.
 - Ideas, not commitments: saving a farm, the day following the viewer's real clock in Real speed mode.
 
 ## 10. Code conventions

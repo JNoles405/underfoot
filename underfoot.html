@@ -731,7 +731,8 @@ function newFarm() {
     if ((x * x) / 64 + (y * y) / 12 <= 1) { const j = idx(queen.x + x, 98 + y); if (j >= 0) { type[j] = E; data[j] = 0; } }
   let sx = 96, sy = 30;
   while (sy < 98) {
-    for (let w = 0; w < 2; w++) { const j = idx(sx + w, sy); if (j >= 0 && type[j] !== STONE) type[j] = E; }
+    // the shaft cuts through pebbles: ants cannot dig stone, and a pebble across the only way out walls the colony in
+    for (let w = 0; w < 2; w++) { const j = idx(sx + w, sy); if (j >= 0) type[j] = E; }
     sy++;
     sx += Math.sign(queen.x - sx) * (rnd() < 0.45 ? 1 : 0) + (rnd() < 0.15 ? (rnd() < 0.5 ? -1 : 1) : 0);
   }
