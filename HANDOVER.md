@@ -7,10 +7,11 @@ grid cells; ants and the queen are agents on top of the grid. The colony digs on
 its own, workers carry crumbs to the queen, she lays an egg for every two crumbs,
 and eggs hatch into workers.
 
-- One self-contained file, `underfoot.html`. Vanilla JS and Canvas 2D. No build step, no dependencies.
+- One self-contained file, `underfoot.html`. Vanilla JS and Canvas 2D. No dependencies. The only build step is for the Vercel site (section 4).
 - Fonts come from Google Fonts (Bricolage Grotesque, Figtree, JetBrains Mono), each with a system fallback.
 - Played as a private Claude artifact: https://claude.ai/artifact/Nj1KucKdfZLcxEmuFpAXCD
 - Repo: https://github.com/JNoles405/underfoot (branch `main`). A push does **not** update the artifact; it is republished separately.
+- Also deployed on Vercel from the repo: https://underfoot-omega.vercel.app/ . A push to `main` redeploys it.
 - Qoder project id: `38d09e61-6080-49d6-a753-950db6093af9`
 
 ## 2. Standing constraints
@@ -29,7 +30,7 @@ Edit `underfoot.html`, check it in a local preview, then republish the artifact.
 
 ## 4. Building, running, testing
 
-There is nothing to build. To preview locally:
+To preview locally:
 
 ```
 node serve.js underfoot.html
@@ -51,6 +52,8 @@ Headless colony test (no browser needed): `node tools/colony-test.js underfoot.h
 Rendering in a real browser without the app's preview: build a wrapper file (doctype + `<body>` + the page + a test `<script>`) and run headless Chrome on it, e.g.
 `chrome.exe --headless=new --virtual-time-budget=4000 --screenshot=out.png --window-size=1280,900 file:///…/wrapper.html`
 or `--dump-dom` to read results the test script writes into the page. Under `--virtual-time-budget`, `performance.now()` does not advance during script execution, so time code in Node instead. Headless Chrome will not make the viewport narrower than 500 px.
+
+**Vercel site.** `vercel.json` runs `node tools/build-site.js`, which writes `dist/index.html`: `underfoot.html` inside the same skeleton (`tools/wrap.js`, shared with `serve.js`). `dist/` is git-ignored. Without this the site root is a 404, because Vercel serves `index.html` and the repo only has `underfoot.html`; serving the raw file would also run in quirks mode with no charset.
 
 To republish from a Claude session: Artifact publish with the file path (same session) or with
 `url: https://claude.ai/artifact/Nj1KucKdfZLcxEmuFpAXCD` (other sessions, after reading it first).
@@ -89,7 +92,11 @@ To republish from a Claude session: Artifact publish with the file path (same se
 - **2026-11-22, v1.4: surface ants find their way home.** Idle surface workers used to walk toward `queen.x` and crowd on the ground above her chamber, unable to get down (10–11 ants on average, about a quarter of the colony). Ants now remember the hole they came out of and go back down it. Fixing that exposed two spoil problems, also fixed: a grain dropped above the ant built thin spires, and carriers steering upward built tall peaks.
 - **2026-11-22, v1.3: death and remains; no outlines.** Ants that die of age or drowning leave remains, which workers carry out of the nest and which crumble in about a day. The owner did not like the v1.2 outlines, so ants are now two-tone (black gaster, rust-red head and thorax) with no halo.
 
+- **2026-11-23, Vercel site.** The repo is also deployed on Vercel, whose root showed a 404. Added `vercel.json` and `tools/build-site.js` to build `dist/index.html` from the page and the shared skeleton in `tools/wrap.js`; `serve.js` uses the same skeleton.
+
 ## 7. Traps already paid for
+
+- The Vercel site at first showed a 404 at its root (2026-11-23): Vercel serves `index.html`, the repo had only `underfoot.html`, and that file has no doctype or charset by design. Fixed with the build step in section 4; keep the skeleton in `tools/wrap.js` so the local preview and the site cannot drift apart.
 
 - A plain falling-sand rule collapses every tunnel. See the packed sand rule above before changing `updSand`.
 - `file://` preview fails in the app's browser pane; serve over localhost instead.
