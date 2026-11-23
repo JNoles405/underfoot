@@ -189,9 +189,9 @@ let trails = true;
 const DAY = 14400;
 let cycle = true, clock = DAY * 9 / 24, daylight = 1, night = false;
 // Real speed: at 2 mm a cell (a 40 x 26 cm farm), a garden ant's ~2 cm/s is 10 cells/s.
-// Ants at 1x measured about 35 cells/s (0.58 cells a step, pauses included), so each ant updates on
-// 0.28 of steps; that measured 0.174 cells a step = 10.4 cells/s = 2.1 cm/s (tools/colony-test.js prints it).
-const REAL_RATE = 0.28;
+// Ants at 1x measured about 44 cells/s (0.73 cells a step, pauses included; v1.6, with route maps), so each
+// ant updates on 0.235 of steps; that measured 0.175 cells a step = 10.5 cells/s = 2.1 cm/s (tools/colony-test.js prints it).
+const REAL_RATE = 0.235;
 let antRate = 1, fade = PHER_FADE;
 const top = new Int16Array(W);
 let frame = 0;
@@ -224,14 +224,41 @@ function isSolid(t) { return t === SAND || t === STONE || t === FOOD || t === EG
 function isAnchor(j) { const t = type[j]; return t === STONE || (t === SAND && flag[j] === 1); }
 function passable(x, y) { const j = idx(x, y); return j >= 0 && (type[j] === E || type[j] === WATER) && !inQueen(x, y); }
 function inQueen(x, y) { return x >= queen.x - 1 && x <= queen.x + 1 && y >= queen.y - 1 && y <= queen.y; }
+// Can an ant stand here? It needs something solid next to it. The queen counts: without that, an ant that
+// climbed onto her back could neither walk off nor fall, and stood frozen there for good.
 function supported(x, y) {
   if (y >= H - 1) return true;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     if (!dx && !dy) continue;
     const j = idx(x + dx, y + dy);
-    if (j >= 0 && isSolid(type[j])) return true;
+    if (j >= 0 && (isSolid(type[j]) || inQueen(x + dx, y + dy))) return true;
   }
   return false;
+}
+// Route maps: the number of ant steps from each cell to the queen (toQueen) and to the open surface (toSky),
+// over cells an ant can stand on. Carriers walk downhill on them. Steering in a straight line instead left
+// them pacing against a chamber wall when the straight line led into open air. NOWAY = no route (a plug):
+// the carrier falls back to steering and digging. Rebuilt every ROUTE_EVERY steps.
+const NOWAY = 65535, ROUTE_EVERY = 10;
+const toQueen = new Uint16Array(N), toSky = new Uint16Array(N), walk = new Uint8Array(N), bfsQ = new Int32Array(N);
+function buildRoutes() {
+  for (let i = 0, y = 0; y < H; y++) for (let x = 0; x < W; x++, i++) walk[i] = passable(x, y) && supported(x, y) ? 1 : 0;
+  route(toQueen, (x, y) => Math.hypot(queen.x - x, queen.y - y) < 3.6); // the delivery radius
+  route(toSky, (x, y) => y < ground[x]);
+}
+function route(dist, goal) {
+  dist.fill(NOWAY);
+  let h = 0, t = 0;
+  for (let i = 0, y = 0; y < H; y++) for (let x = 0; x < W; x++, i++) if (walk[i] && goal(x, y)) { dist[i] = 0; bfsQ[t++] = i; }
+  while (h < t) {
+    const i = bfsQ[h++], x = i % W, y = (i / W) | 0, d = dist[i] + 1;
+    for (const [dx, dy] of N8) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const j = ny * W + nx;
+      if (walk[j] && dist[j] === NOWAY) { dist[j] = d; bfsQ[t++] = j; }
+    }
+  }
 }
 
 /* ---------- particles ---------- */
@@ -320,6 +347,7 @@ function addAnt(x, y) {
     hi: 999, stuck: 0, // highest row reached while carrying sand, and updates since it last improved
     acc: rnd(), // update budget; below 1 the ant waits this step (real speed)
     load: 0, // decay of the remains it is carrying
+    ct: 0, // updates spent carrying sand or remains
     up: false, ex: -1 // above ground last update; column it last came out of the nest by
   });
 }
@@ -366,38 +394,51 @@ function updAnt(a) {
     if (rnd() < 0.5) return true;
   } else if (a.wet > 0) a.wet -= 2;
 
+  // caught inside the queen (she settled onto it): climb out over her back
+  if (inQueen(a.x, a.y)) { if (passable(a.x, queen.y - 2)) a.y = queen.y - 2; return true; }
   if (!supported(a.x, a.y)) { if (passable(a.x, a.y + 1)) a.y++; return true; }
   if (a.bored > 0) a.bored--;
+  if (a.carry === SAND || a.carry === DEAD) a.ct++; else a.ct = 0;
   if (trails && a.carry === FOOD && pher[i] < a.trail) pher[i] = a.trail; // lay scent on the way home
   if (rnd() < (night && !a.carry ? 0.65 : 0.35)) return true; // ants pause, and rest more after dark
 
   // "Above" means above the ground line, which ignores narrow holes, so an ant in the entrance shaft is
   // still inside. Crossing the line upward records the column it came out of: that is its way home.
   const above = a.y < ground[a.x];
-  if (above !== a.up) { a.up = above; if (above) a.ex = a.x; if (a.carry === FOOD) a.hi = 999; }
-  let gx = 0, gy = 0, digging = false;
+  if (above !== a.up) { a.up = above; if (above) a.ex = a.x; if (a.carry === FOOD) a.hi = 999; a.stuck = 0; }
+  let gx = 0, gy = 0, digging = false, way = null; // way: a route map to walk down instead of steering
 
   if (a.carry === SAND || a.carry === DEAD) {
     // sand and the dead both go up and out, and are carried a few cells clear of the hole before being
     // dropped (the dead further), so the spoil heap does not slide back down the shaft
     gx = a.hx * 0.6; gy = -1;
-    if (above) { gx = a.hx; gy = 0; } // out on the surface, walk along it rather than up the spoil heap
-    if (above && Math.abs(a.x - a.ex) > 3 && rnd() < (a.carry === DEAD ? 0.02 : 0.07)) {
+    if (above) { // out on the surface, walk along it rather than up the spoil heap; turn back at the glass edge
+      if (a.x <= 1) a.hx = 1; else if (a.x >= W - 2) a.hx = -1;
+      gx = a.hx; gy = 0;
+    }
+    // Drop once clear of the exit. A carrier that has held its load a long time may also drop it in a low spot
+    // (at or below the ground line): on the floor of a crater too wide for the ground line to ignore, it used to
+    // pace by its exit for good. Not on high spots, which grew peaks; climbing out of the crater did that too.
+    if (above && (Math.abs(a.x - a.ex) > 3 || (a.ct > 400 && a.y >= ground[a.x] - 1)) && rnd() < (a.carry === DEAD ? 0.02 : 0.07)) {
       // drop it beside the ant, not on top: a grain dropped above lands in the ant's own cell, the ant
       // climbs onto it, and the next grain lands higher, which built thin spires of sand
       for (const [dx, dy] of [[a.hx,0],[-a.hx,0],[a.hx,-1],[-a.hx,-1],[0,-1]]) {
         const j = idx(a.x + dx, a.y + dy);
         if (j >= 0 && type[j] === E && !inQueen(a.x + dx, a.y + dy)) { setCell(j, a.carry, a.carry === DEAD ? a.load : 0, 0); a.carry = 0; a.hi = 999; break; }
       }
-    } else if (!above) {
+    } else if (!above && toSky[i] !== NOWAY) { way = toSky; a.hi = a.y; a.stuck = 0; } // a way out exists: take it
+    else if (!above) {
       // Dumped sand can slide back and plug the shaft, trapping every carrier below it.
       // A carrier that stops gaining height digs upward through whatever is in the way.
+      // No route out is known here (see toSky), so it does not wait long.
       if (a.y < a.hi) { a.hi = a.y; a.stuck = 0; }
-      else if (++a.stuck > 240) { a.stuck = 120; digToward(a, a.hx * 0.3, -1, false); }
+      else if (++a.stuck > 60) { a.stuck = 30; digToward(a, a.hx * 0.3, -1, false); }
     }
   } else if (a.carry === FOOD) {
     if (Math.hypot(queen.x - a.x, queen.y - a.y) < 3.6) { a.carry = 0; a.hi = 999; queen.food++; queen.fed++; return true; }
-    // on the surface, go to the way in first; inside, go to the queen
+    if (toQueen[i] !== NOWAY) { way = toQueen; a.hi = 999; a.stuck = 0; } // a way to the queen exists: take it
+    else {
+    // no known way: on the surface, go to the way in first; inside, go to the queen
     const tx = above ? homeX(a) : queen.x, ty = above ? ground[tx] + 3 : queen.y;
     gx = tx - a.x; gy = ty - a.y;
     const dist = Math.hypot(gx, gy) || 1;
@@ -406,6 +447,7 @@ function updAnt(a) {
     // same rescue as sand carriers: no progress toward the goal for a while, dig toward it
     if (dist < a.hi - 0.5) { a.hi = dist; a.stuck = 0; }
     else if (++a.stuck > 240) { a.stuck = 120; digToward(a, gx, gy, false); }
+    }
   } else {
     for (const [dx, dy] of N8) {
       const j = idx(a.x + dx, a.y + dy);
@@ -441,7 +483,9 @@ function updAnt(a) {
   for (const [dx, dy] of N8) {
     const nx = a.x + dx, ny = a.y + dy;
     if (!passable(nx, ny) || !supported(nx, ny)) continue;
-    let s = (dx * gx + dy * gy) / Math.hypot(dx, dy) + rnd() * 0.9 + (dx === a.hx ? 0.25 : 0);
+    // on a route map a step closer scores 1 and a step back -1, the same range as steering
+    const pull = way ? Math.max(-1.5, way[i] - way[ny * W + nx]) : (dx * gx + dy * gy) / Math.hypot(dx, dy);
+    let s = pull + rnd() * 0.9 + (dx === a.hx ? 0.25 : 0);
     if (type[ny * W + nx] === WATER) s -= 0.6;
     if (s > bs) { bs = s; bx = dx; by = dy; }
   }
@@ -511,17 +555,18 @@ function computeTop() {
     while (y < H && !(type[y * W + x] === SAND || type[y * W + x] === STONE)) y++;
     top[x] = y;
   }
-  // ground: the median of top over 7 columns, so a hole up to 3 wide does not lower the surface line.
+  // ground: the median of top over 11 columns, so a hole up to 5 wide does not lower the surface line (at 7
+  // columns, a 5-wide sinkhole counted as surface, and carriers in the cavity under its overhangs paced for good).
   // holes: columns that open more than 2 cells below the ground line, i.e. ways into the nest.
   holes.length = 0;
   for (let x = 0; x < W; x++) {
-    for (let k = -3; k <= 3; k++) win[k + 3] = top[x + k < 0 ? 0 : x + k >= W ? W - 1 : x + k];
+    for (let k = -5; k <= 5; k++) win[k + 5] = top[x + k < 0 ? 0 : x + k >= W ? W - 1 : x + k];
     win.sort();
-    ground[x] = win[3];
+    ground[x] = win[5];
     if (top[x] > ground[x] + 2) holes.push(x);
   }
 }
-const ground = new Int16Array(W), win = new Int16Array(7), holes = [];
+const ground = new Int16Array(W), win = new Int16Array(11), holes = [];
 // Where an ant goes to get back underground: the hole it came out of if that is still open,
 // else the nearest open hole, else straight above the queen (where it will dig a new way in).
 function homeX(a) {
@@ -558,6 +603,7 @@ function step() {
     }
   }
   computeTop();
+  if (frame % ROUTE_EVERY === 0 || frame === 1) buildRoutes();
   if (trails) for (let i = 0; i < N; i++) {
     if (pher[i] === 0) continue;
     pher[i] = type[i] !== E || pher[i] < 0.01 ? 0 : pher[i] * fade; // fades; sand or water wipes it
